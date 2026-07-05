@@ -7834,7 +7834,8 @@ window.addEventListener('keydown',function(e){
     const dt=Math.min(.1,(now-lastPostT)/1000);lastPostT=now;
     const day=STATE.day||1;
     if(Math.random()<dt*(day>=4?.9:day>=3?.35:.10))glitchEnv=Math.min(1,glitchEnv+.55+Math.random()*.45);
-    if(STATE.godSequenceActive||STATE.bossActive)glitchEnv=Math.max(glitchEnv,.5);
+    if(STATE.godSequenceActive)glitchEnv=Math.max(glitchEnv,.5);
+    else if(STATE.bossActive)glitchEnv=Math.max(glitchEnv,.16); // low floor; attacks/hits spike it
     glitchEnv=Math.max(0,glitchEnv-dt*2.6);
     const u=post.mat.uniforms;
     u.uT.value=now/1000;
@@ -7843,10 +7844,17 @@ window.addEventListener('keydown',function(e){
     u.uDread.value=clamp((day-1)/4*.8+(STATE.threatHeat||0)/130*.25+(STATE.godSequenceActive?.6:0),0,1);
   }
 
+  // Later layers can spike the glitch envelope (boss hits, slams, damage).
+  window.__vhsKick=v=>{glitchEnv=Math.max(glitchEnv,Math.min(1.4,v||0));};
+
   if(post.ok){
     const origRender=renderer.render.bind(renderer);
     renderer.render=function(s,c){
-      if(!post.ok||s!==scene){origRender(s,c);return;}
+      const fx=window.__vhsCamFx;
+      if(!post.ok||s!==scene){
+        if(fx){fx.apply();origRender(s,c);fx.revert();}else origRender(s,c);
+        return;
+      }
       try{
         renderer.getSize(sizeVec);
         if(post.rt.width!==sizeVec.x||post.rt.height!==sizeVec.y){
@@ -7854,13 +7862,16 @@ window.addEventListener('keydown',function(e){
           post.mat.uniforms.uRes.value.set(sizeVec.x,sizeVec.y);
         }
         drivePostUniforms();
+        if(fx)fx.apply();
         renderer.setRenderTarget(post.rt);
         origRender(s,c);
         renderer.setRenderTarget(null);
         origRender(post.scene,post.cam);
+        if(fx)fx.revert();
       }catch(e){
         post.ok=false;
         try{renderer.setRenderTarget(null);}catch(_){ }
+        try{if(fx)fx.revert();}catch(_){ }
         origRender(s,c);
       }
     };
@@ -8350,8 +8361,336 @@ window.addEventListener('keydown',function(e){
     reload:()=>initiateReload(),
     setWeapon:i=>{STATE.weaponIndex=i;switchWeaponModels();resetWeapon();},
     look:(y,p)=>{yaw=y;pitch=p;},
-    terrainY:(x,z)=>getTerrainHeight(x,z)
+    terrainY:(x,z)=>getTerrainHeight(x,z),
+    boss:()=>startBossFight(),
+    hitBoss:p=>hitGod(p||'body')
   };
+})();
+
+
+/* === VHS MOVEMENT + BOSS REMASTER ===
+   Movement: landing dips, footstep thumps, breathing sway, day-scaled handycam
+   drift, slide/sprint FOV kicks, and camera shake — applied as render-time
+   camera offsets so the game's own camera logic is never disturbed.
+   Boss: gorier GOD model (jaw, neck gore, viscera, orbiting bone shards),
+   living telegraphs with fill discs and detonation shock rings, slam/phase/hit
+   feedback wired into the VHS shader's glitch envelope. */
+(function(){
+  if(window.__vhsMotionBossRemaster)return;
+  window.__vhsMotionBossRemaster=true;
+
+  /* ---------- 1) MOVEMENT FEEL ---------- */
+  let dip=0,dipV=0,shake=0,fovOff=0,prevCanJump=true,prevVy=0,lastStep=0,lastT=performance.now();
+  window.__vhsShake=v=>{shake=Math.max(shake,Math.min(1.6,v||0));};
+
+  const saved={rx:0,ry:0,rz:0,px:0,py:0,fov:70,fovDirty:false};
+  window.__vhsCamFx={
+    apply(){
+      const now=performance.now();
+      const dt=Math.min(.06,(now-lastT)/1000);lastT=now;
+      saved.rx=camera.rotation.x;saved.ry=camera.rotation.y;saved.rz=camera.rotation.z;
+      saved.px=camera.position.x;saved.py=camera.position.y;
+      saved.fov=camera.fov;saved.fovDirty=false;
+      if(!STATE.gameStarted||STATE.isPaused||STATE.isDead)return;
+      const t=now/1000,day=STATE.day||1;
+      // landing dip: spring impulse scaled by fall speed
+      if(!prevCanJump&&STATE.canJump){
+        dipV-=clamp(Math.abs(prevVy)*.028,.05,.34);
+        if(Math.abs(prevVy)>7)window.__vhsShake(.25);
+      }
+      prevCanJump=STATE.canJump;prevVy=STATE.playerVelocity.y;
+      // footstep thump synced to the footstep sounds
+      if(STATE.lastFootstep&&STATE.lastFootstep!==lastStep){
+        lastStep=STATE.lastFootstep;
+        dipV-=STATE.isSprinting?.075:.045;
+      }
+      dipV+=(-90*dip-13*dipV)*dt;dip+=dipV*dt;
+      // breathing: slow at rest, heaving when stamina is spent
+      const winded=1+(1-(STATE.stamina!==undefined?STATE.stamina:1))*2.2;
+      const idleAmp=(STATE.groundSpeed||0)<.2?1:.35;
+      const breathe=Math.sin(t*(1.1+(winded-1)*.6))*.0022*winded*idleAmp;
+      // handycam drift: grows with the days, parks while aiming
+      const dread=clamp((day-1)/4,0,1)+(STATE.godSequenceActive?.5:0);
+      const aimMute=STATE.isAiming?.15:1;
+      const driftYaw=(Math.sin(t*.23)+Math.sin(t*.41+2.1))*.0011*(0.4+dread)*aimMute;
+      const driftPitch=(Math.sin(t*.31+1.2)+Math.sin(t*.53))*.0009*(0.4+dread)*aimMute;
+      // slide/sprint/impact FOV
+      const fovTarget=(STATE.isSliding?5:(STATE.isSprinting?2:0))+shake*2;
+      fovOff+=(fovTarget-fovOff)*Math.min(1,dt*8);
+      shake=Math.max(0,shake-dt*2.2);
+      const shX=shake>.001?(Math.random()-.5)*shake*.035:0;
+      const shY=shake>.001?(Math.random()-.5)*shake*.035:0;
+      camera.rotation.x+=breathe+driftPitch+shY+dip*.12;
+      camera.rotation.y+=driftYaw+shX;
+      camera.rotation.z+=(STATE.isSliding?-.05:0)+driftYaw*.6+(shake>.001?(Math.random()-.5)*shake*.02:0);
+      camera.position.y+=dip;
+      if(Math.abs(fovOff)>.01){camera.fov=saved.fov+fovOff;camera.updateProjectionMatrix();saved.fovDirty=true;}
+    },
+    revert(){
+      camera.rotation.x=saved.rx;camera.rotation.y=saved.ry;camera.rotation.z=saved.rz;
+      camera.position.x=saved.px;camera.position.y=saved.py;
+      if(saved.fovDirty){camera.fov=saved.fov;camera.updateProjectionMatrix();}
+    }
+  };
+
+  // firing punch: heavier guns rattle the camera harder
+  const __vhsFirePrev=fireWeapon;
+  fireWeapon=function(){
+    const w=curWep&&curWep();
+    const had=w&&w.ammo>0;
+    const r=__vhsFirePrev.apply(this,arguments);
+    try{
+      if(had&&!STATE.isReloading&&!STATE.inCabin){
+        const punch=w.id==='magnum'?.34:(w.id==='rifle'?.30:(w.id==='shotgun'?.24:.08));
+        window.__vhsShake(punch);
+      }
+    }catch(e){}
+    return r;
+  };
+
+  /* ---------- 2) BOSS REMASTER ---------- */
+  // updateBossFight has always called updateEnemies(), which was never defined:
+  // every boss frame threw a ReferenceError, so GOD never walked, jumped, or
+  // scheduled attacks, telegraphs never detonated, and ghosts never spawned.
+  // Define it globally so the whole fight actually runs.
+  if(typeof window.updateEnemies!=='function'){
+    window.updateEnemies=function(delta){
+      if(typeof DLC==='undefined'||!DLC.enemies||!STATE.bossActive)return;
+      for(let i=DLC.enemies.length-1;i>=0;i--){
+        const e=DLC.enemies[i];
+        e.life-=delta;e.attackCooldown=Math.max(0,(e.attackCooldown||0)-delta);
+        if(e.life<=0){scene.remove(e.group);DLC.enemies.splice(i,1);continue;}
+        const to=new THREE.Vector3().subVectors(playerControls.position,e.group.position);
+        const dist=to.length();to.normalize();
+        e.group.position.addScaledVector(to,(e.speed||6)*delta);
+        e.group.position.y=getTerrainHeight(e.group.position.x,e.group.position.z)+1.1;
+        e.group.lookAt(playerControls.position.x,e.group.position.y,playerControls.position.z);
+        if(dist<3.2&&e.attackCooldown<=0){
+          damagePlayer(6,'BOSS GHOST');
+          e.attackCooldown=2.2;
+          e.group.position.addScaledVector(to,-3);
+        }
+      }
+    };
+  }
+  // dlcTick's day-5 branch clears DLC.enemies every tick, which would delete
+  // boss ghosts the frame after they spawn. Shield them while the boss lives.
+  if(typeof dlcTick==='function'){
+    const __vhsDlcTickPrev=dlcTick;
+    dlcTick=function(){
+      const guard=STATE.bossActive&&STATE.day===5&&typeof DLC!=='undefined'&&DLC.enemies&&DLC.enemies.length;
+      let stash=null;
+      if(guard){stash=DLC.enemies;DLC.enemies=[];}
+      const r=__vhsDlcTickPrev.apply(this,arguments);
+      if(guard)DLC.enemies=stash.concat(DLC.enemies);
+      return r;
+    };
+  }
+
+  const rings=[]; // expanding shock rings
+  function shockRing(x,z,big){
+    try{
+      const y=getTerrainHeight(x,z)+.15;
+      const m=new THREE.Mesh(new THREE.TorusGeometry(1,.14,6,28),
+        new THREE.MeshBasicMaterial({color:big?0xff5c39:0xff2222,transparent:true,opacity:.85}));
+      m.rotation.x=Math.PI/2;m.position.set(x,y,z);
+      scene.add(m);rings.push({m,life:big?.65:.45,max:big?.65:.45,big});
+    }catch(e){}
+  }
+
+  function gorifyGod(){
+    if(typeof buildGodForm!=='function')return null;
+    const god=buildGodForm();
+    if(!god)return null;
+    if(god.userData.vhsGoreDone)return god;
+    god.userData.vhsGoreDone=true;
+    god.userData.vhsBaseScale=god.scale.x||1; // horrorBunnyGod ships at 2.25
+    // local-space coordinates below are calibrated for the horrorBunnyGod body
+    // (head ~y6.7, mouth ~y6.1 z2.08 before the group's 2.25 scale)
+    const tall=!!god.userData.horrorBunnyGod;
+    const yHead=tall?6.1:2.0, zMouth=tall?1.9:2.9, yMid=tall?3.8:2.2;
+    const gore=new THREE.MeshBasicMaterial({color:0x6e0000});
+    const goreBright=new THREE.MeshBasicMaterial({color:0xa50021});
+    const boneMat=new THREE.MeshBasicMaterial({color:0xe5dbc5});
+    // lower jaw that drops open ahead of attacks
+    const jaw=new THREE.Group();
+    const jawBox=new THREE.Mesh(new THREE.BoxGeometry(tall?1.05:3.0,tall?.26:.8,tall?.62:1.9),new THREE.MeshBasicMaterial({color:0x050000}));
+    jawBox.position.set(0,-.13,.28);jaw.add(jawBox);
+    for(let i=-2;i<=2;i++){
+      const tooth=new THREE.Mesh(new THREE.ConeGeometry(tall?.05:.15,tall?.24:.55,4),boneMat);
+      tooth.position.set(i*(tall?.17:.5),0,tall?.5:.75);jaw.add(tooth);
+    }
+    const jawGore=new THREE.Mesh(new THREE.BoxGeometry(tall?.8:2.4,tall?.12:.3,tall?.45:1.5),goreBright);
+    jawGore.position.set(0,-.02,.15);jaw.add(jawGore);
+    jaw.position.set(0,yHead-.25,zMouth);
+    god.add(jaw);
+    god.userData.vhsJaw=jaw;
+    god.userData.vhsJawHome=jaw.position.y;
+    // open wounds seeping down the torso
+    for(let i=0;i<4;i++){
+      const blob=new THREE.Mesh(new THREE.SphereGeometry((tall?.22:.6)+Math.random()*.2,7,5),i%2?gore:goreBright);
+      blob.position.set((Math.random()-.5)*(tall?1.6:2.6),yMid-1+Math.random()*1.6,(tall?.9:.9)+Math.random()*.3);
+      blob.scale.y=.55;god.add(blob);
+    }
+    // dripping viscera strands under the belly split
+    for(let i=0;i<3;i++){
+      const strand=new THREE.Mesh(new THREE.CylinderGeometry(tall?.045:.09,tall?.02:.05,(tall?.9:1.6)+Math.random()*.5,5),goreBright);
+      strand.position.set((Math.random()-.5)*(tall?.7:2.4),yMid-1.7,tall?1.2:.9);
+      strand.rotation.x=(Math.random()-.5)*.25;god.add(strand);
+    }
+    // bone halo hovering over the head
+    const haloRing=new THREE.Mesh(new THREE.TorusGeometry(tall?.95:2.2,tall?.055:.12,6,22),boneMat);
+    haloRing.rotation.x=Math.PI/2;
+    haloRing.position.set(0,tall?9.3:6.1,tall?.45:.2);
+    god.add(haloRing);
+    god.userData.vhsHalo=haloRing;
+    // orbiting bone shards
+    const shards=new THREE.Group();
+    for(let i=0;i<5;i++){
+      const shard=new THREE.Mesh(new THREE.ConeGeometry(tall?.1:.22,tall?.5:1.1,4),boneMat);
+      shard.userData.a=i/5*Math.PI*2;
+      shard.userData.r=(tall?2.4:4.6)+Math.random()*(tall?.6:1.2);
+      shard.userData.spin=2+Math.random()*3;
+      shards.add(shard);
+    }
+    shards.position.y=tall?5.4:4.4;
+    god.add(shards);
+    god.userData.vhsShards=shards;
+    // collect point lights for hit/urgency flashes; cap the interior aura so
+    // ACES doesn't roll the fur to pure white at close range
+    god.userData.vhsLights=[];
+    god.traverse(o=>{
+      if(!o.isPointLight)return;
+      if(o.intensity>4)o.intensity=3.0;
+      god.userData.vhsLights.push({l:o,base:o.intensity});
+    });
+    return god;
+  }
+
+  let prevPhase=1,prevJumping=false,prevBossActive=false,ringLastT=performance.now();
+  function bossFxTick(){
+    requestAnimationFrame(bossFxTick);
+    const now=performance.now();
+    const dt=Math.min(.06,(now-ringLastT)/1000);ringLastT=now;
+    // shock rings live even outside boss (used by slam feedback)
+    for(let i=rings.length-1;i>=0;i--){
+      const r=rings[i];r.life-=dt;
+      if(r.life<=0){scene.remove(r.m);rings.splice(i,1);continue;}
+      const p=1-r.life/r.max;
+      r.m.scale.setScalar(1+p*(r.big?9:5));
+      r.m.material.opacity=.85*(1-p);
+    }
+    if(!STATE.gameStarted||STATE.isPaused||STATE.isDead)return;
+    if(!STATE.bossActive){prevBossActive=false;return;}
+    const god=gorifyGod();if(!god)return;
+    // The last-chance visibility patch force-shows every god mesh, including
+    // the invisible white hitbox boxes, which draws GOD as a giant white slab.
+    // Keep hitboxes hidden (their material color defaults to 0xffffff).
+    god.traverse(o=>{
+      if(o.isMesh&&o.userData&&o.userData.type==='god'&&o.material&&o.material.visible)o.material.visible=false;
+    });
+    const t=now/1000,phase=STATE.bossPhase||1;
+    if(!prevBossActive){prevBossActive=true;prevPhase=phase;window.__vhsKick&&window.__vhsKick(1);window.__vhsShake(.8);}
+    // breathing bulk + jaw creeping open as the next attack nears
+    const urgency=clamp(1-((STATE.bossAttackTimer||2)/2),0,1);
+    const baseScale=god.userData.vhsBaseScale||1;
+    god.scale.setScalar(baseScale*(1+Math.sin(t*2.1)*.02+urgency*.02));
+    if(god.userData.vhsJaw){
+      god.userData.vhsJaw.rotation.x=.10+urgency*.5+Math.sin(t*3.1)*.03;
+      god.userData.vhsJaw.position.y=(god.userData.vhsJawHome||0)-urgency*.22;
+    }
+    if(god.userData.vhsHalo){
+      god.userData.vhsHalo.rotation.z+=dt*.6;
+      god.userData.vhsHalo.position.y+=Math.sin(t*1.4)*.002;
+    }
+    // orbiting shards speed up with phase
+    if(god.userData.vhsShards){
+      const sh=god.userData.vhsShards;
+      sh.rotation.y+=dt*(.8+phase*.5);
+      sh.children.forEach(s=>{
+        s.position.set(Math.cos(s.userData.a)*s.userData.r,Math.sin(t*s.userData.spin*.4+s.userData.a)*.8,Math.sin(s.userData.a)*s.userData.r);
+        s.rotation.x+=dt*s.userData.spin;s.rotation.z+=dt*s.userData.spin*.7;
+      });
+    }
+    // eye/halo pulse with urgency, decay hit flashes
+    if(god.userData.vhsLights)god.userData.vhsLights.forEach(e=>{
+      const flash=e.l.userData.vhsFlash||0;
+      // keep the pulse subtle so the big aura light can't blow the model out
+      e.l.intensity=Math.min(e.base*1.45,e.base*(1+urgency*.3+Math.sin(t*6)*.08))+flash;
+      e.l.userData.vhsFlash=Math.max(0,flash-dt*14);
+    });
+    // aura churn (added by the earlier ultra patch)
+    if(god.userData.remasterAura){
+      const a=god.userData.remasterAura;
+      a.material.opacity=.12+urgency*.10+Math.sin(t*3.3)*.03;
+      a.rotation.y+=dt*.5;
+    }
+    // phase escalation burst
+    if(phase>prevPhase){
+      prevPhase=phase;
+      window.__vhsKick&&window.__vhsKick(1.2);window.__vhsShake(1.1);
+      if(god.userData.vhsLights)god.userData.vhsLights.forEach(e=>e.l.userData.vhsFlash=6);
+      if(god.userData.remasterAura)god.userData.remasterAura.material.color.setHex(phase>=3?0xff7722:0xff2244);
+      shockRing(god.position.x,god.position.z,true);
+    }
+    // landing slam feedback
+    if(prevJumping&&!STATE.godJumping){
+      shockRing(god.position.x,god.position.z,true);
+      const d=Math.hypot(playerControls.position.x-god.position.x,playerControls.position.z-god.position.z);
+      window.__vhsShake(clamp(1.4-d*.05,.3,1.2));
+      window.__vhsKick&&window.__vhsKick(.7);
+    }
+    prevJumping=!!STATE.godJumping;
+    // telegraph upgrades: fill disc + detonation ring
+    for(const tg of (STATE.bossTelegraphs||[])){
+      if(!tg.group)continue;
+      if(!tg.__vhsDisc){
+        const disc=new THREE.Mesh(new THREE.CircleGeometry(tg.radius,24),
+          new THREE.MeshBasicMaterial({color:0xff2222,transparent:true,opacity:.20,side:THREE.DoubleSide}));
+        disc.rotation.x=-Math.PI/2;disc.position.y=.12;disc.scale.setScalar(.05);
+        tg.group.add(disc);tg.__vhsDisc=disc;
+      }
+      const fill=clamp(1-Math.max(0,tg.timer),0.05,1);
+      tg.__vhsDisc.scale.setScalar(fill);
+      tg.__vhsDisc.material.opacity=.14+fill*.22;
+      if(tg.timer<=.04&&!tg.__vhsRang){
+        tg.__vhsRang=true;
+        shockRing(tg.x,tg.z,false);
+        const d=Math.hypot(playerControls.position.x-tg.x,playerControls.position.z-tg.z);
+        if(d<tg.radius+3)window.__vhsShake(clamp(.9-d*.06,.15,.8));
+      }
+    }
+  }
+  requestAnimationFrame(bossFxTick);
+
+  // hit feedback: eye flare, gore burst, glitch tick
+  if(typeof hitGod==='function'){
+    const __vhsHitGodPrev=hitGod;
+    hitGod=function(part){
+      const r=__vhsHitGodPrev.apply(this,arguments);
+      try{
+        const god=gorifyGod();
+        if(god&&god.userData.vhsLights)god.userData.vhsLights.forEach(e=>e.l.userData.vhsFlash=part==='head'?4:2);
+        if(god&&typeof spawnBlood==='function')spawnBlood(god.position.x,god.position.y+3,god.position.z);
+        window.__vhsShake(part==='head'?.22:.12);
+        window.__vhsKick&&window.__vhsKick(part==='head'?.4:.2);
+      }catch(e){}
+      return r;
+    };
+  }
+
+  // taking damage rattles the signal hard
+  if(typeof damagePlayer==='function'){
+    const __vhsDmgPrev=damagePlayer;
+    damagePlayer=function(n){
+      const r=__vhsDmgPrev.apply(this,arguments);
+      try{
+        window.__vhsShake(clamp(.4+(n||0)*.02,.4,1.3));
+        window.__vhsKick&&window.__vhsKick(clamp(.5+(n||0)*.02,.5,1.2));
+      }catch(e){}
+      return r;
+    };
+  }
 })();
 
 resizeRenderer();renderJournal();animate();

@@ -7680,6 +7680,23 @@ window.addEventListener('keydown',function(e){
   if(window.__vhsAnalogRemaster)return;
   window.__vhsAnalogRemaster=true;
 
+  // The stat layer snapshotted base weapon stats BEFORE the slot remap
+  // (semi-auto/MP40/Galil/Bloodhound), so applyGlobalWeaponStats kept
+  // reverting those guns to old shotgun/AR/SMG/magnum numbers mid-run
+  // (e.g. the MP40 refilled to 30 instead of 32). Current stats at this
+  // point are the intended remapped values with zero upgrades applied,
+  // so re-snapshot them as the bases.
+  WEAPONS.forEach(w=>{
+    if(!w.baseStatsReady)return;
+    w.baseDmg=w.dmg;
+    w.baseMaxMag=w.maxMag;
+    w.baseMagBase=w.magBase;
+    w.baseMaxReserve=w.maxReserve;
+    w.baseSpread=w.spread||.01;
+    w.baseSway=w.sway||1;
+    w.baseDelay=w.delay||.3;
+  });
+
   /* ---------- procedural grayscale detail textures ---------- */
   function detailCanvas(size,draw){const c=document.createElement('canvas');c.width=c.height=size;draw(c.getContext('2d'),size);return c;}
   function toTex(c,rx=1,ry=rx){const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(rx,ry);return t;}

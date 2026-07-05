@@ -7730,7 +7730,15 @@ window.addEventListener('keydown',function(e){
       g.beginPath();g.moveTo(x,y);g.lineTo(x+(Math.random()-.5)*2,y+ln);g.stroke();
     }
   });
-  const texGunMetal=toTex(cMetal,2,2), texGunWood=toTex(cWood,1.5,1.5), texFur=toTex(cFur,3,3);
+  const cKnurl=detailCanvas(64,(g,s)=>{
+    g.fillStyle='#9a9a9a';g.fillRect(0,0,s,s);
+    g.strokeStyle='rgba(20,20,20,.5)';g.lineWidth=1;
+    for(let i=-s;i<s*2;i+=4){
+      g.beginPath();g.moveTo(i,0);g.lineTo(i+s,s);g.stroke();
+      g.beginPath();g.moveTo(i+s,0);g.lineTo(i,s);g.stroke();
+    }
+  });
+  const texGunMetal=toTex(cMetal,2,2), texGunWood=toTex(cWood,1.5,1.5), texFur=toTex(cFur,3,3), texKnurl=toTex(cKnurl,4,4);
 
   const cFlash=detailCanvas(64,(g,s)=>{
     const r=g.createRadialGradient(s/2,s/2,1,s/2,s/2,s/2);
@@ -7879,8 +7887,11 @@ window.addEventListener('keydown',function(e){
         if(!m.isMeshStandardMaterial)return;
         const c=m.color;
         const isWood=c.r>c.b*1.5&&c.r>.15&&m.metalness<.3;
+        const isPolymer=!isWood&&m.roughness>=.8&&m.metalness<.2;
         if(isWood){
           m.map=texGunWood;m.bumpMap=texGunWood;m.bumpScale=.012;
+        }else if(isPolymer){
+          m.bumpMap=texKnurl;m.bumpScale=.01; // checkered grip/furniture feel
         }else{
           m.map=texGunMetal;m.bumpMap=texGunMetal;m.bumpScale=.006;
           m.roughnessMap=texGunMetal;
@@ -7907,17 +7918,27 @@ window.addEventListener('keydown',function(e){
         if(id==='rifle'){ // bolt hunting rifle
           d(w,C(.05,.05,.012),dmLens,0,.35,.095,HALF);            // scope rear lens
           d(w,C(.058,.058,.012),dmLensDark,0,.35,-.595,HALF);     // scope front lens
+          d(w,C(.028,.028,.045,8),dmDark,0,.415,-.25);            // scope elevation turret
+          d(w,C(.028,.028,.045,8),dmDark,.062,.35,-.25,0,0,HALF); // scope windage turret
+          [-.44,-.06].forEach(z=>d(w,B(.05,.09,.05),dmSteel,0,.28,z)); // scope mounts
           if(w.refs.boltH)d(w,new THREE.SphereGeometry(.03,8,6),dmSteel,0,.11,0,0,0,0,w.refs.boltH); // bolt knob
           d(w,C(.062,.062,.03),dmSteel,0,.065,-1.55,HALF);        // barrel band
           d(w,B(.46,.36,.02),dmDark,0,-.05,1.09);                 // buttplate
+          d(w,B(.18,.10,.42),dmDark,0,-.02,.72,-.10,0,0);         // stock comb
           [-.7,-.32,.05].forEach(z=>d(w,C(.012,.012,.02),dmDark,-.132,.03,z,0,0,HALF)); // receiver screws
+          d(w,T(.016,.005),dmSteel,0,-.40,.72,HALF,0,0);          // rear sling swivel
+          d(w,T(.016,.005),dmSteel,0,-.055,-1.42,HALF,0,0);       // front sling swivel
           d(w,T(.05,.008),dmDark,0,-.15,.03,0,HALF,0);            // trigger guard
           d(w,B(.015,.07,.02),dmSteel,0,-.12,.03,.2,0,0);         // trigger
         }else if(id==='shotgun'){ // SEMI-AUTO RIFLE slot
           d(w,C(.055,.055,.06),dmSteel,0,.06,-2.28,HALF);         // muzzle brake ring
           [[.05,0],[-.05,0],[0,.05],[0,-.05]].forEach(o=>d(w,B(.012,.012,.16),dmDark,o[0],.06+o[1],-2.2)); // brake fins
           d(w,B(.01,.055,.14),dmDark,.141,.05,-.30);              // ejection port
+          d(w,B(.04,.06,.05),dmSteel,.145,.05,-.20,0,0,.5);       // brass deflector wedge
+          [-.11,.11].forEach(x=>d(w,B(.02,.06,1.2),dmDark,x,.06,-1.05)); // rail side panels
+          d(w,B(.24,.08,.26),dmDark,0,-.26,-.36);                 // magwell flare
           d(w,B(.14,.05,.30),dmDark,0,.13,.50);                   // cheek riser
+          d(w,C(.045,.045,.30,8),dmDark,0,.02,.10);               // buffer tube
           d(w,T(.02,.006),dmDark,0,.36,-.12,0,0,0);               // rear aperture
           d(w,T(.05,.008),dmDark,0,-.16,-.06,0,HALF,0);           // trigger guard
           d(w,B(.015,.07,.02),dmSteel,0,-.13,-.06,.2,0,0);        // trigger
@@ -7927,14 +7948,21 @@ window.addEventListener('keydown',function(e){
             d(w,C(.012,.012,.012),dmDark,-.070,.12,-.25-k*.2,0,0,HALF);
             d(w,C(.012,.012,.012),dmDark,.070,.12,-.25-k*.2,0,0,HALF);
           }
+          d(w,C(.074,.074,.02),dmSteel,0,.12,.005);               // receiver rear cap
           d(w,C(.03,.05,.05),dmSteel,0,.07,-1.92,HALF);           // muzzle nut
           d(w,B(.03,.05,.12),dmDark,0,-.01,-1.60);                // resting bar hook
+          [-.10,0,.10].forEach(z=>d(w,B(.185,.14,.02),dmSteel,0,.02,-.18+z)); // magwell ribs
           if(w.refs.mag)[-.15,0,.15].forEach(y=>d(w,B(.156,.02,.186),dmDark,0,y,0,0,0,0,w.refs.mag)); // mag ribs
+          d(w,T(.016,.005),dmSteel,-.075,.10,.00,0,0,HALF);       // sling loop
           d(w,T(.05,.008),dmDark,0,-.15,-.06,0,HALF,0);           // trigger guard
           d(w,B(.015,.07,.02),dmSteel,0,-.12,-.06,.2,0,0);        // trigger
         }else if(id==='smg'){ // GALIL slot
           d(w,C(.05,.05,.08),dmSteel,0,.07,-1.80,HALF);           // muzzle brake
+          d(w,C(.022,.022,.62,8),dmSteel,0,.145,-1.02,HALF);      // gas tube over barrel
           [[-.05,-.09],[.05,-.09]].forEach(o=>d(w,C(.012,.012,.5),dmDark,o[0],o[1],-1.0,HALF,0,o[0]<0?.06:-.06)); // folded bipod rods
+          [-.7,-.45,-.2].forEach(z=>d(w,B(.27,.015,.03),dmDark,0,.248,z)); // dust cover ribs
+          d(w,B(.05,.10,.10),dmSteel,-.17,-.02,.42);              // side-folder hinge block
+          d(w,B(.24,.08,.26),dmDark,0,-.24,-.34);                 // magwell flare
           if(w.refs.mag)[-.14,0,.14].forEach(y=>d(w,B(.205,.02,.226),dmDark,0,y,0,0,0,0,w.refs.mag)); // mag ribs
           d(w,B(.01,.06,.16),dmDark,.171,.06,-.30);               // ejection port
           d(w,T(.05,.008),dmDark,0,-.16,-.06,0,HALF,0);           // trigger guard
@@ -7944,8 +7972,12 @@ window.addEventListener('keydown',function(e){
             const a=k/6*Math.PI*2;
             d(w,B(.018,.24,.018),dmDark,Math.cos(a)*.062,0,Math.sin(a)*.062,0,0,0,w.refs.cyl);
           }
+          d(w,B(.05,.06,.62),dmSteel,0,.035,-.50);                // barrel underlug
           d(w,C(.012,.012,.40),dmSteel,0,.05,-.45,HALF);          // ejector rod
+          d(w,B(.04,.06,.08),dmSteel,0,-.02,-.02);                // cylinder crane
           d(w,B(.03,.08,.05),dmSteel,0,.17,.06,-.5,0,0);          // hammer spur
+          d(w,B(.035,.045,.015),dmDark,0,.235,.02);               // rear sight blade
+          [-.28,-.20].forEach(y=>d(w,B(.185,.015,.10),dmDark,0,y,.075,-.30,0,0)); // grip finger grooves
           d(w,T(.05,.008),dmDark,0,-.06,-.10,0,HALF,0);           // trigger guard
           d(w,B(.014,.06,.018),dmSteel,0,-.04,-.10,.25,0,0);      // trigger
           d(w,C(.02,.02,.02),dmBrass,.093,-.24,.09,0,0,HALF);     // grip medallion
@@ -8216,6 +8248,35 @@ window.addEventListener('keydown',function(e){
         m.color.offsetHSL((Math.random()-.5)*.02,(Math.random()-.5)*.06,(Math.random()-.5)*.05);
         m.needsUpdate=true;
       });
+      // fuller rabbit silhouette: haunches, cheeks, front paws, tail fluff
+      let furMat=null;
+      rig.group.traverse(o=>{if(!furMat&&o.isMesh&&o.material&&o.material.isMeshStandardMaterial)furMat=o.material;});
+      if(furMat){
+        const ball=(r,x,y,z,sx=1,sy=1,sz=1,mat=furMat)=>{
+          const m=new THREE.Mesh(new THREE.SphereGeometry(r*s,9,7),mat);
+          m.position.set(x*s,y*s,z*s);m.scale.set(sx,sy,sz);m.castShadow=true;
+          rig.group.add(m);return m;
+        };
+        [-1,1].forEach(side=>{
+          ball(.17,side*.21,.31,-.23,.85,1.05,1.15);   // haunch
+          ball(.07,side*.105,.775,.665);               // cheek
+          ball(.05,side*.13,.06,.44,1,.72,1.35);       // front paw
+        });
+        ball(.075,0,.51,-.53);                         // tail fluff top
+        if(isBig){
+          const ridgeMat=furMat.clone();
+          ridgeMat.color=furMat.color.clone().multiplyScalar(.72);
+          ball(.20,0,.56,-.04,.55,.38,1.45,ridgeMat);  // dark spine ridge
+        }
+        if(isPale){
+          const socketMat=new THREE.MeshBasicMaterial({color:0x140505});
+          [-1,1].forEach(side=>{
+            const so=new THREE.Mesh(new THREE.SphereGeometry(.046*s,7,5),socketMat);
+            so.position.set(side*.115*s,.862*s,.723*s);
+            rig.group.add(so);
+          });
+        }
+      }
       const wsk=new THREE.MeshBasicMaterial({color:0x1c1410,transparent:true,opacity:.75});
       [-1,1].forEach(side=>{
         for(let i=0;i<3;i++){

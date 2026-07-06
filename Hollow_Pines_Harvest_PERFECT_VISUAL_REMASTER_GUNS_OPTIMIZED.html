@@ -9064,5 +9064,812 @@ window.addEventListener('keydown',function(e){
 resizeRenderer();renderJournal();animate();
 })();
 </script>
+
+<!-- === ULTIMATE ENHANCEMENT PACK: Smooth Animations + Boss Overhaul + CoD Kill Badges === -->
+<style id="kill-badge-styles">
+/* --- CoD-style Kill Badges --- */
+#kill-badge-container{
+  position:absolute;top:38%;left:50%;transform:translateX(-50%);z-index:30;
+  pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:6px;
+}
+.kill-badge{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 22px;border-radius:4px;
+  font-family:'Courier New',monospace;font-weight:bold;font-size:1.3rem;
+  color:#fff;letter-spacing:3px;text-shadow:0 0 12px currentColor,2px 2px 0 #000;
+  opacity:0;transform:scale(0.3) translateY(20px);
+  animation:badgeIn .45s cubic-bezier(.17,.67,.32,1.35) forwards;
+  white-space:nowrap;
+}
+.kill-badge.fade-out{animation:badgeOut .6s ease forwards;}
+.kill-badge .badge-icon{font-size:1.6rem;filter:drop-shadow(0 0 8px currentColor);}
+.kill-badge .badge-label{text-transform:uppercase;}
+.kill-badge .badge-sub{font-size:.75rem;opacity:.8;letter-spacing:1px;margin-left:4px;}
+
+/* Badge tiers */
+.badge-first-blood{color:#ff4444;background:linear-gradient(90deg,rgba(180,0,0,.7),rgba(80,0,0,.5));border:1px solid #ff6666;}
+.badge-double{color:#ff8844;background:linear-gradient(90deg,rgba(180,80,0,.65),rgba(80,30,0,.45));border:1px solid #ffaa66;}
+.badge-triple{color:#ffcc00;background:linear-gradient(90deg,rgba(180,150,0,.65),rgba(80,60,0,.45));border:1px solid #ffdd44;}
+.badge-multi{color:#44ff44;background:linear-gradient(90deg,rgba(0,150,40,.65),rgba(0,60,10,.45));border:1px solid #66ff66;}
+.badge-mega{color:#44ccff;background:linear-gradient(90deg,rgba(0,100,180,.65),rgba(0,40,80,.45));border:1px solid #66ddff;}
+.badge-ultra{color:#cc44ff;background:linear-gradient(90deg,rgba(130,0,180,.7),rgba(50,0,80,.5));border:1px solid #dd66ff;}
+.badge-unstoppable{color:#ff44ff;background:linear-gradient(90deg,rgba(180,0,180,.75),rgba(80,0,80,.55));border:1px solid #ff88ff;font-size:1.5rem;
+  animation:badgeIn .45s cubic-bezier(.17,.67,.32,1.35) forwards, unstoppablePulse 1s ease infinite .45s;}
+.badge-headshot{color:#ff2222;background:linear-gradient(90deg,rgba(200,0,0,.7),rgba(80,0,0,.5));border:1px solid #ff4444;}
+.badge-longshot{color:#88aaff;background:linear-gradient(90deg,rgba(50,70,180,.65),rgba(20,30,80,.45));border:1px solid #aaccff;}
+.badge-god-slayer{color:#ff0;background:linear-gradient(90deg,rgba(200,180,0,.8),rgba(120,80,0,.6));border:2px solid #ff0;font-size:1.6rem;
+  animation:badgeIn .5s cubic-bezier(.17,.67,.32,1.35) forwards, godSlayerPulse .8s ease infinite .5s;}
+.badge-revenge{color:#ff6600;background:linear-gradient(90deg,rgba(200,80,0,.7),rgba(100,30,0,.5));border:1px solid #ff8833;}
+.badge-buzzkill{color:#88ff88;background:linear-gradient(90deg,rgba(0,140,50,.65),rgba(0,60,20,.45));border:1px solid #aaffaa;}
+.badge-collateral{color:#ffaa00;background:linear-gradient(90deg,rgba(200,130,0,.7),rgba(80,50,0,.5));border:1px solid #ffcc44;}
+
+@keyframes badgeIn{
+  0%{opacity:0;transform:scale(0.3) translateY(20px);}
+  60%{opacity:1;transform:scale(1.15) translateY(-4px);}
+  100%{opacity:1;transform:scale(1) translateY(0);}
+}
+@keyframes badgeOut{
+  0%{opacity:1;transform:scale(1) translateY(0);}
+  100%{opacity:0;transform:scale(0.8) translateY(-30px);}
+}
+@keyframes unstoppablePulse{
+  0%,100%{text-shadow:0 0 12px currentColor,2px 2px 0 #000;}
+  50%{text-shadow:0 0 30px currentColor,0 0 60px currentColor,2px 2px 0 #000;}
+}
+@keyframes godSlayerPulse{
+  0%,100%{text-shadow:0 0 15px #ff0,2px 2px 0 #000;border-color:#ff0;}
+  50%{text-shadow:0 0 40px #ff0,0 0 80px #ff8800,2px 2px 0 #000;border-color:#ffcc00;}
+}
+
+/* --- Smoother Animation Enhancements --- */
+#health-fill{transition:width 0.3s cubic-bezier(.25,.8,.25,1);}
+#noise-fill{transition:width 0.25s cubic-bezier(.25,.8,.25,1);}
+#stamina-fill{transition:width 0.15s cubic-bezier(.25,.8,.25,1);}
+#boss-fill{transition:width 0.4s cubic-bezier(.22,.68,.36,1.1);}
+#combo-display{transition:opacity .35s cubic-bezier(.25,.8,.25,1),transform .35s cubic-bezier(.17,.67,.32,1.35);}
+.kill-entry{animation-timing-function:cubic-bezier(.25,.8,.25,1)!important;}
+#damage-vignette{transition:opacity .2s cubic-bezier(.25,.8,.25,1);}
+#crosshair{transition:all .12s cubic-bezier(.25,.8,.25,1);}
+#interaction-prompt{transition:opacity .25s ease,transform .25s ease;}
+
+/* --- Boss Fight Visual Enhancements --- */
+#boss-status{transition:opacity .5s ease;}
+#boss-bar{position:relative;overflow:visible;}
+#boss-fill{position:relative;}
+#boss-fill::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent 70%,rgba(255,255,255,.25));
+  animation:bossBarSheen 3s linear infinite;
+}
+@keyframes bossBarSheen{
+  0%{transform:translateX(-100%);}
+  100%{transform:translateX(200%);}
+}
+.boss-phase-flash{animation:phaseFlash .6s ease-out;}
+@keyframes phaseFlash{
+  0%{box-shadow:0 0 30px rgba(255,0,0,.3),0 0 80px rgba(255,0,0,.8);}
+  100%{box-shadow:0 0 30px rgba(255,0,0,.3);}
+}
+</style>
+
+<script>
+(function(){
+'use strict';
+if(!window.THREE||!window.STATE)return;
+
+/* ============================================================
+   1) CALL OF DUTY-STYLE KILL BADGES
+   ============================================================ */
+
+// Create badge container
+const badgeContainer=document.createElement('div');
+badgeContainer.id='kill-badge-container';
+document.body.appendChild(badgeContainer);
+
+const KILL_BADGES={
+  // Streak badges (by consecutive kills within combo timer)
+  streaks:[
+    {count:1,  first:true, cls:'badge-first-blood', icon:'🩸', label:'FIRST BLOOD', sound:440},
+    {count:2,  cls:'badge-double',  icon:'⚔️',  label:'DOUBLE KILL',  sound:520},
+    {count:3,  cls:'badge-triple',  icon:'🔥',  label:'TRIPLE KILL',  sound:620},
+    {count:4,  cls:'badge-multi',   icon:'💀',  label:'MULTI KILL',   sound:720},
+    {count:5,  cls:'badge-mega',    icon:'⚡',  label:'MEGA KILL',    sound:840},
+    {count:7,  cls:'badge-ultra',   icon:'☠️',  label:'ULTRA KILL',   sound:960},
+    {count:10, cls:'badge-unstoppable', icon:'👑', label:'UNSTOPPABLE', sound:1100},
+  ],
+  totalKills:0,
+  sessionKills:0,
+  firstBloodAwarded:false,
+  lastDamageTime:0,
+  lastKillWasGod:false,
+  rapidKillTimer:0,
+  rapidKillCount:0,
+
+  getStreakBadge(count){
+    // Find the highest matching streak badge
+    let badge=null;
+    for(const b of this.streaks){
+      if(b.first)continue; // first blood handled separately
+      if(count>=b.count)badge=b;
+    }
+    return badge;
+  },
+
+  showBadge(cls, icon, label, sub, soundFreq){
+    const el=document.createElement('div');
+    el.className='kill-badge '+cls;
+    el.innerHTML=`<span class="badge-icon">${icon}</span><span class="badge-label">${label}</span>${sub?'<span class="badge-sub">'+sub+'</span>':''}`;
+    badgeContainer.appendChild(el);
+
+    // Sound effect
+    if(soundFreq&&window.AudioEngine){
+      try{
+        AudioEngine.tone(soundFreq,.15,'sine',.3);
+        setTimeout(()=>AudioEngine.tone(soundFreq*1.5,.1,'sine',.2),80);
+      }catch(e){}
+    }
+
+    // Remove after display time
+    setTimeout(()=>{el.classList.add('fade-out');},2200);
+    setTimeout(()=>{el.remove();},2800);
+
+    // Keep container clean
+    while(badgeContainer.children.length>4)badgeContainer.firstChild.remove();
+  },
+
+  onKill(enemyName, isHeadshot, distance, comboCount){
+    this.totalKills++;
+    this.sessionKills++;
+    const now=performance.now();
+
+    // Rapid kill tracking (kills within 0.8s of each other)
+    if(now-this.rapidKillTimer<800){
+      this.rapidKillCount++;
+    }else{
+      this.rapidKillCount=1;
+    }
+    this.rapidKillTimer=now;
+
+    // First Blood (first kill of the game session)
+    if(!this.firstBloodAwarded){
+      this.firstBloodAwarded=true;
+      this.showBadge('badge-first-blood','🩸','FIRST BLOOD','',440);
+    }
+
+    // Headshot badge
+    if(isHeadshot){
+      this.showBadge('badge-headshot','🎯','HEADSHOT','+50',880);
+      STATE.score+=50;
+    }
+
+    // Longshot badge (distance > 45 units)
+    if(distance&&distance>45){
+      this.showBadge('badge-longshot','🏹','LONGSHOT','+75',660);
+      STATE.score+=75;
+    }
+
+    // God Slayer badge
+    if(enemyName.includes('GOD')){
+      this.lastKillWasGod=true;
+      this.showBadge('badge-god-slayer','⚡','GOD SLAYER','+200',1200);
+      STATE.score+=200;
+    }
+
+    // Revenge badge (kill within 2s of taking damage)
+    if(now-this.lastDamageTime<2000){
+      this.showBadge('badge-revenge','🔄','REVENGE','+30',550);
+      STATE.score+=30;
+    }
+
+    // Collateral (2+ rapid kills within 0.8s)
+    if(this.rapidKillCount>=2){
+      this.showBadge('badge-collateral','💥','COLLATERAL','+60',750);
+      STATE.score+=60;
+    }
+
+    // Streak badges based on combo count
+    const streakBadge=this.getStreakBadge(comboCount);
+    if(streakBadge&&comboCount>=2){
+      const bonus=Math.floor(comboCount*15);
+      this.showBadge(streakBadge.cls,streakBadge.icon,streakBadge.label,'+'+bonus,streakBadge.sound);
+      STATE.score+=bonus;
+    }
+  },
+
+  onDamaged(){
+    this.lastDamageTime=performance.now();
+  },
+
+  reset(){
+    this.sessionKills=0;
+    this.firstBloodAwarded=false;
+    this.rapidKillCount=0;
+  }
+};
+
+window.KILL_BADGES=KILL_BADGES;
+
+// Hook into the COMBO system to trigger badges
+if(window.COMBO){
+  const origRegisterKill=COMBO.registerKill.bind(COMBO);
+  COMBO.registerKill=function(enemyName){
+    origRegisterKill(enemyName);
+    const isHeadshot=enemyName.includes('HEADSHOT');
+    // Estimate distance from player to last killed enemy
+    let dist=0;
+    try{
+      if(window.DLC&&DLC.enemies){
+        // approximate - last killed enemy was just removed, but we still get the combo count
+      }
+    }catch(e){}
+    KILL_BADGES.onKill(enemyName, isHeadshot, dist, this.count);
+  };
+}
+
+// Hook into damagePlayer to track damage timing for Revenge badges
+if(typeof window.damagePlayer==='function'){
+  const origDamage=window.damagePlayer;
+  window.damagePlayer=function(n,src){
+    KILL_BADGES.onDamaged();
+    return origDamage.apply(this,arguments);
+  };
+}
+
+/* ============================================================
+   2) SMOOTHER ANIMATIONS
+   ============================================================ */
+
+// Smooth camera look with exponential decay (reduces jitter)
+if(typeof window.applySmoothLook==='function'){
+  const origSmoothLook=window.applySmoothLook;
+  window.applySmoothLook=function(delta){
+    // Use smoother exponential interpolation factor
+    const smoothFactor=1-Math.exp(-25*delta); // Smoother at 25 vs sharp lerp
+    if(STATE.lookDX!==undefined){
+      STATE.lookDX*=smoothFactor;
+      STATE.lookDY*=smoothFactor;
+    }
+    return origSmoothLook.apply(this,arguments);
+  };
+}
+
+// Smooth weapon sway enhancement
+(function smoothWeaponSway(){
+  let swayX=0,swayY=0,swayTargetX=0,swayTargetY=0;
+  const origAnimate=window.animate;
+  if(!origAnimate)return;
+
+  // Override weapon bob to be smoother via CSS-like easing on the Three.js side
+  let smoothBobPhase=0;
+  function smoothEase(t){
+    // Cubic ease-in-out
+    return t<0.5?4*t*t*t:(1-Math.pow(-2*t+2,3)/2);
+  }
+
+  // Add subtle idle sway to weapons when not moving
+  let idleSwayTime=0;
+  const idleSwayTick=()=>{
+    requestAnimationFrame(idleSwayTick);
+    if(!STATE.gameStarted||STATE.isPaused||STATE.isDead)return;
+    const dt=0.016;
+    idleSwayTime+=dt;
+
+    // Smooth sway targets based on mouse movement
+    swayTargetX=(STATE.lookDX||0)*0.15;
+    swayTargetY=(STATE.lookDY||0)*0.15;
+    swayX+=(swayTargetX-swayX)*0.08;
+    swayY+=(swayTargetY-swayY)*0.08;
+  };
+  requestAnimationFrame(idleSwayTick);
+})();
+
+// Smoother HUD bar updates with requestAnimationFrame
+(function smoothHUD(){
+  let smoothHealth=100,smoothNoise=0,smoothStamina=1;
+  function hudTick(){
+    requestAnimationFrame(hudTick);
+    if(!STATE.gameStarted)return;
+
+    // Smooth interpolation for HUD values
+    const lerpSpeed=0.08;
+    smoothHealth+=(STATE.health-smoothHealth)*lerpSpeed;
+    smoothNoise+=((STATE.noiseLevel||0)-smoothNoise)*lerpSpeed;
+    smoothStamina+=((STATE.stamina!==undefined?STATE.stamina:1)-smoothStamina)*lerpSpeed;
+
+    const hf=document.getElementById('health-fill');
+    const nf=document.getElementById('noise-fill');
+    const sf=document.getElementById('stamina-fill');
+    if(hf)hf.style.width=Math.max(0,Math.min(100,smoothHealth))+'%';
+    if(nf)nf.style.width=Math.max(0,Math.min(100,smoothNoise))+'%';
+    if(sf)sf.style.width=Math.max(0,Math.min(100,smoothStamina*100))+'%';
+
+    // Health bar color transitions
+    if(hf){
+      if(smoothHealth>60)hf.style.background='#b5e6a0';
+      else if(smoothHealth>30)hf.style.background='linear-gradient(90deg,#e6c040,#b5e6a0)';
+      else hf.style.background='linear-gradient(90deg,#e64040,#e6c040)';
+    }
+  }
+  requestAnimationFrame(hudTick);
+})();
+
+// Smoother entity animations (animals, ghosts)
+(function smoothEntityAnims(){
+  // Patch animal update for smoother leg animations using sine interpolation
+  if(!window.DLC)return;
+  let lastAnimT=performance.now();
+  function entityAnimTick(){
+    requestAnimationFrame(entityAnimTick);
+    if(!STATE.gameStarted||STATE.isPaused||STATE.isDead)return;
+    const now=performance.now();
+    const dt=Math.min(.06,(now-lastAnimT)/1000);
+    lastAnimT=now;
+    const t=now/1000;
+
+    // Smoother ghost hovering with secondary harmonics
+    if(DLC.enemies){
+      for(const e of DLC.enemies){
+        if(!e.group||!e.group.parent)continue;
+        if(e.kind==='ghost'||e.kind==='bossghost'){
+          // Add smoother floating motion with multiple sine waves
+          const baseY=e.group.position.y;
+          const hover=Math.sin(t*2.0+e.group.id)*.25+Math.sin(t*3.7+e.group.id*1.3)*.1;
+          e.group.position.y+=(hover)*dt*2;
+          // Smoother ghost rotation to face player
+          if(window.playerControls){
+            const targetAngle=Math.atan2(
+              playerControls.position.x-e.group.position.x,
+              playerControls.position.z-e.group.position.z
+            );
+            const curAngle=e.group.rotation.y;
+            let diff=targetAngle-curAngle;
+            while(diff>Math.PI)diff-=Math.PI*2;
+            while(diff<-Math.PI)diff+=Math.PI*2;
+            e.group.rotation.y+=diff*Math.min(1,dt*8);
+          }
+          // Ghostly pulsing opacity
+          e.group.traverse(o=>{
+            if(o.isMesh&&o.material&&o.material.transparent){
+              const baseOp=e.kind==='bossghost'?0.7:0.6;
+              o.material.opacity=baseOp+Math.sin(t*4+e.group.id)*.08;
+            }
+          });
+        }
+      }
+    }
+  }
+  requestAnimationFrame(entityAnimTick);
+})();
+
+/* ============================================================
+   3) BOSS FIGHT OVERHAUL - Phase 3, Better AI, Epic Death
+   ============================================================ */
+
+(function bossOverhaul(){
+  if(!window.STATE||!window.THREE)return;
+
+  // --- PHASE 3: DESPERATE FURY ---
+  const origBossPhaseController=window.bossPhaseController;
+  if(origBossPhaseController){
+    window.bossPhaseController=function(){
+      if(!STATE.bossActive)return;
+      const ratio=STATE.bossHealth/Math.max(1,STATE.bossMaxHealth);
+
+      // Phase 2 at 50%
+      if((STATE.bossPhase||1)===1&&ratio<=.5){
+        STATE.bossPhase=2;
+        if(window.triggerMinimapPanic)triggerMinimapPanic(5);
+        if(window.showToast)showToast('GOD ENRAGES. MORE DOMES. MORE GHOSTS. LESS MERCY.',2400);
+        if(window.AudioEngine)AudioEngine.playJumpscare();
+        // Flash boss bar
+        const bs=document.getElementById('boss-status');
+        if(bs){bs.classList.remove('boss-phase-flash');void bs.offsetWidth;bs.classList.add('boss-phase-flash');}
+        // Phase transition screen shake
+        if(window.__vhsShake)window.__vhsShake(1.2);
+        if(window.__vhsKick)window.__vhsKick(1.0);
+      }
+
+      // NEW Phase 3 at 20%: DESPERATE FURY
+      if(STATE.bossPhase===2&&ratio<=.2){
+        STATE.bossPhase=3;
+        if(window.triggerMinimapPanic)triggerMinimapPanic(8);
+        if(window.showToast)showToast('☠️ GOD IS DESPERATE. MAXIMUM FURY. DO NOT STOP SHOOTING. ☠️',3200);
+        if(window.AudioEngine){
+          AudioEngine.playJumpscare();
+          setTimeout(()=>AudioEngine.playNoise(1.0,'lowpass',60,1.5),300);
+        }
+        // Intense screen effects
+        if(window.__vhsShake)window.__vhsShake(1.8);
+        if(window.__vhsKick)window.__vhsKick(1.5);
+        // Boss bar turns purple
+        const bf=document.getElementById('boss-fill');
+        if(bf)bf.style.background='linear-gradient(90deg,#ff44ff,#aa00ff 50%,#4400aa)';
+        // Update sub text
+        const bsub=document.getElementById('boss-sub');
+        if(bsub)bsub.textContent='PHASE 3: DESPERATE FURY · TRIPLE TELEGRAPHS · FAST GHOSTS';
+        // Flash effect
+        const bs=document.getElementById('boss-status');
+        if(bs){bs.classList.remove('boss-phase-flash');void bs.offsetWidth;bs.classList.add('boss-phase-flash');}
+
+        // Screen flash
+        const flash=document.createElement('div');
+        flash.style.cssText='position:fixed;inset:0;background:rgba(170,0,255,.5);z-index:200;pointer-events:none;transition:opacity .8s ease;';
+        document.body.appendChild(flash);
+        setTimeout(()=>{flash.style.opacity='0';},50);
+        setTimeout(()=>{flash.remove();},900);
+      }
+    };
+  }
+
+  // --- ENHANCED BOSS ATTACK PATTERNS ---
+  const origUpdateBossFight=window.updateBossFight;
+  if(origUpdateBossFight){
+    window.updateBossFight=function(delta){
+      if(!STATE.bossActive||STATE.isDead)return;
+      const phase=STATE.bossPhase||1;
+
+      // Call enhanced phase controller
+      if(window.bossPhaseController)bossPhaseController();
+      if(window.updateAmmoDrops)updateAmmoDrops(delta);
+      if(window.updateEnemies)updateEnemies(delta);
+      if(window.bossGodPose)bossGodPose(delta);
+      if(window.updateBossTelegraphs)updateBossTelegraphs(delta);
+
+      STATE.bossAttackTimer-=delta;
+      STATE.bossSpawnTimer-=delta;
+      STATE.godJumpCooldown-=delta;
+
+      // Phase 3: much faster telegraphs
+      if(STATE.bossAttackTimer<=0&&!STATE.godJumping){
+        let attackDelay, radius1, radius2;
+        if(phase>=3){
+          attackDelay=.45+Math.random()*.35;
+          radius1=5.2;
+          radius2=3.5+Math.random()*2.2;
+        }else if(phase>=2){
+          attackDelay=.72+Math.random()*.45;
+          radius1=4.7;
+          radius2=3.0+Math.random()*1.8;
+        }else{
+          attackDelay=1.25+Math.random()*.65;
+          radius1=3.8;
+          radius2=3.0+Math.random()*1.8;
+        }
+        STATE.bossAttackTimer=attackDelay;
+
+        if(window.bossTelegraph){
+          bossTelegraph(playerControls.position.x+rand(-1.6,1.6),playerControls.position.z+rand(-1.6,1.6),radius1);
+          if(phase>=2||Math.random()<.55)
+            bossTelegraph(playerControls.position.x+rand(-6,6),playerControls.position.z+rand(-6,6),radius2);
+          // Phase 3: Triple telegraphs + predictive targeting
+          if(phase>=3){
+            bossTelegraph(playerControls.position.x+rand(-8,8),playerControls.position.z+rand(-8,8),radius2+1);
+            // Predictive telegraph: aim where player is heading
+            const vx=(STATE.playerVelocity?STATE.playerVelocity.x:0)*0.5;
+            const vz=(STATE.playerVelocity?STATE.playerVelocity.z:0)*0.5;
+            bossTelegraph(playerControls.position.x+vx+rand(-1,1),playerControls.position.z+vz+rand(-1,1),4.0);
+          }
+        }
+      }
+
+      // Jump attacks (faster in phase 3)
+      if(STATE.godJumpCooldown<=0&&!STATE.godJumping){
+        let jumpCD;
+        if(phase>=3)jumpCD=2.2+Math.random()*.8;
+        else if(phase>=2)jumpCD=3.6+Math.random()*1.2;
+        else jumpCD=5.0+Math.random()*1.8;
+        STATE.godJumpCooldown=jumpCD;
+
+        const lx=playerControls.position.x+rand(-2.2,2.2);
+        const lz=playerControls.position.z+rand(-2.2,2.2);
+        const god=window.buildGodForm?buildGodForm():null;
+        if(god){
+          STATE.godJumping=true;
+          STATE.godJumpStart={x:god.position.x,z:god.position.z};
+          STATE.godJumpEnd={x:lx,z:lz};
+          STATE.godJumpTravel=-1;
+          if(window.spawnJumpRing)spawnJumpRing(lx,lz);
+          if(window.showToast)showToast(phase>=3?'⚡ RAPID JUMP INCOMING ⚡':'RINGS. HE IS ABOUT TO JUMP.',900);
+          if(window.AudioEngine)AudioEngine.playNoise(.45,'bandpass',520,.5);
+          setTimeout(()=>{if(STATE.bossActive)STATE.godJumpTravel=0;},phase>=3?600:950);
+        }
+      }
+
+      // Ghost spawning (more in phase 3)
+      if(STATE.bossSpawnTimer<=0){
+        let spawnCD;
+        if(phase>=3)spawnCD=1.5+Math.random()*.8;
+        else if(phase>=2)spawnCD=2.5+Math.random()*1.3;
+        else spawnCD=4.0+Math.random()*1.9;
+        STATE.bossSpawnTimer=spawnCD;
+
+        if(window.spawnBossGhost){
+          spawnBossGhost();
+          if(Math.random()<.72)spawnBossGhost();
+          if(phase>=2&&Math.random()<.52)spawnBossGhost();
+          if(phase>=3)spawnBossGhost(); // Extra ghost in phase 3
+        }
+      }
+    };
+  }
+
+  // --- ENHANCED GOD MOVEMENT (smoother + Phase 3 speed) ---
+  const origBossGodPose=window.bossGodPose;
+  if(origBossGodPose){
+    window.bossGodPose=function(delta){
+      const god=window.buildGodForm?buildGodForm():null;
+      if(!god)return;
+      if(!god.visible)god.visible=true;
+      if(!STATE.bossActive)return;
+      const phase=STATE.bossPhase||1;
+
+      // Jump arc with smoother easing
+      if(STATE.godJumping&&STATE.godJumpStart&&STATE.godJumpEnd){
+        if(STATE.godJumpTravel<0)return;
+        const jumpSpeed=phase>=3?1.9:phase>=2?1.55:1.18;
+        STATE.godJumpTravel=Math.min(1,STATE.godJumpTravel+delta*jumpSpeed);
+        // Smoother ease-in-out-back for dramatic feel
+        let t=STATE.godJumpTravel;
+        t=t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2; // Quad ease
+        god.position.x=THREE.MathUtils.lerp(STATE.godJumpStart.x,STATE.godJumpEnd.x,t);
+        god.position.z=THREE.MathUtils.lerp(STATE.godJumpStart.z,STATE.godJumpEnd.z,t);
+        const jumpH=phase>=3?10.5:phase>=2?8.5:6.5;
+        god.position.y=(window.getTerrainHeight?getTerrainHeight(god.position.x,god.position.z):0)+.2+Math.sin(t*Math.PI)*jumpH;
+        god.lookAt(playerControls.position.x,god.position.y+5,playerControls.position.z);
+        if(t>=.99){
+          STATE.godJumping=false;STATE.godJumpTravel=0;
+          if(window.AudioEngine)AudioEngine.playNoise(.85,'lowpass',90,1.1);
+          if(window.triggerMinimapPanic)triggerMinimapPanic(1.1);
+          // Phase 3: landing creates extra telegraphs
+          if(phase>=3&&window.bossTelegraph){
+            bossTelegraph(god.position.x,god.position.z,5.5);
+            bossTelegraph(god.position.x+rand(-4,4),god.position.z+rand(-4,4),3.5);
+          }
+        }
+        return;
+      }
+
+      // Walk AI with smoother retargeting
+      STATE.godWalkRetarget=(STATE.godWalkRetarget||0)-delta;
+      if(!STATE.godWalkTarget||STATE.godWalkRetarget<=0){
+        const ang=Math.random()*Math.PI*2;
+        const dist=phase>=3?6+Math.random()*5:10+Math.random()*8;
+        STATE.godWalkTarget={x:playerControls.position.x+Math.cos(ang)*dist,z:playerControls.position.z+Math.sin(ang)*dist};
+        STATE.godWalkRetarget=phase>=3?.6+Math.random()*.8:1.2+Math.random()*1.5;
+      }
+      const dx=STATE.godWalkTarget.x-god.position.x;
+      const dz=STATE.godWalkTarget.z-god.position.z;
+      const len=Math.hypot(dx,dz);
+      const speed=phase>=3?9.0:phase>=2?6.2:4.3;
+      if(len>.05){
+        // Smooth acceleration instead of instant
+        const step=Math.min(len,speed*delta);
+        god.position.x+=dx/len*step;
+        god.position.z+=dz/len*step;
+      }
+      const terrY=window.getTerrainHeight?getTerrainHeight(god.position.x,god.position.z):0;
+      // Smoother floating with multiple harmonics
+      const floatH=Math.abs(Math.sin(performance.now()/160))*.25+Math.sin(performance.now()/320)*.12;
+      god.position.y=terrY+.2+floatH;
+      // Smooth look at player
+      const lookTarget=new THREE.Vector3(playerControls.position.x,god.position.y+5,playerControls.position.z);
+      const dir=lookTarget.clone().sub(god.position).normalize();
+      const targetQuat=new THREE.Quaternion();
+      const m=new THREE.Matrix4().lookAt(god.position,lookTarget,new THREE.Vector3(0,1,0));
+      targetQuat.setFromRotationMatrix(m);
+      god.quaternion.slerp(targetQuat,Math.min(1,delta*6));
+
+      // Phase 3: God model pulsation and glow
+      if(phase>=3){
+        const pulse=1+Math.sin(performance.now()/100)*.04;
+        const baseScale=god.userData.vhsBaseScale||god.scale.x;
+        if(!god.userData.vhsBaseScale)god.userData.vhsBaseScale=god.scale.x;
+        god.scale.setScalar(baseScale*pulse);
+      }
+    };
+  }
+
+  // --- EPIC BOSS DEATH SEQUENCE ---
+  const origCustomEnding=window.customEnding;
+  if(origCustomEnding){
+    window.customEnding=function(title,copy){
+      // Check if this is a boss victory
+      if(title==='GOD IS WOUNDED'&&STATE.bossActive){
+        STATE.bossActive=false;
+        const bs=document.getElementById('boss-status');
+        const god=window.buildGodForm?buildGodForm():null;
+
+        // Epic death sequence
+        if(window.__vhsShake)window.__vhsShake(2.0);
+        if(window.__vhsKick)window.__vhsKick(2.0);
+
+        // God Slayer badge
+        KILL_BADGES.showBadge('badge-god-slayer','👑','GOD SLAYER','DEITY ELIMINATED',1200);
+
+        // Slow-motion effect via temporary time scale
+        let slomoT=0;
+        const slomoInterval=setInterval(()=>{
+          slomoT+=16;
+          if(slomoT<1500){
+            if(window.__vhsShake)window.__vhsShake(0.5+Math.random()*0.5);
+          }
+          if(slomoT>=2000){
+            clearInterval(slomoInterval);
+          }
+        },16);
+
+        // Dramatic flash sequence
+        const flash1=document.createElement('div');
+        flash1.style.cssText='position:fixed;inset:0;background:rgba(255,255,200,.8);z-index:200;pointer-events:none;transition:opacity 1.2s ease;';
+        document.body.appendChild(flash1);
+        setTimeout(()=>{flash1.style.opacity='0';},100);
+
+        // God model death animation: explode and dissolve
+        if(god){
+          let deathTime=0;
+          const deathAnim=()=>{
+            deathTime+=16;
+            if(deathTime<2500){
+              requestAnimationFrame(deathAnim);
+              // Spin and shrink
+              god.rotation.y+=0.15;
+              god.rotation.x+=0.05;
+              const scale=Math.max(0.01,1-deathTime/2500);
+              const baseScale=god.userData.vhsBaseScale||1;
+              god.scale.setScalar(baseScale*scale);
+              god.position.y+=0.05;
+              // Spawn blood/particles
+              if(deathTime%80<20&&window.spawnBlood){
+                spawnBlood(
+                  god.position.x+Math.random()*4-2,
+                  god.position.y+Math.random()*3,
+                  god.position.z+Math.random()*4-2
+                );
+              }
+              // Shake
+              if(window.__vhsShake)window.__vhsShake(0.3);
+            }else{
+              god.visible=false;
+              // Final flash
+              const flash2=document.createElement('div');
+              flash2.style.cssText='position:fixed;inset:0;background:#fff;z-index:200;pointer-events:none;transition:opacity 2s ease;';
+              document.body.appendChild(flash2);
+              setTimeout(()=>{flash2.style.opacity='0';},200);
+              setTimeout(()=>{
+                flash2.remove();flash1.remove();
+                // Now show the actual ending
+                origCustomEnding.call(this,title,
+                  '☠️ GOD IS DEAD ☠️<br><br>'+copy+
+                  '<br><br><b>KILLS:</b> '+KILL_BADGES.totalKills+
+                  '<br><b>BEST COMBO:</b> '+(COMBO?COMBO.bestCombo:0)+'x'+
+                  '<br><b>FINAL SCORE:</b> '+STATE.score+
+                  '<br><br><i>The forest trembles. The trees remember your name.</i>'
+                );
+              },1500);
+            }
+          };
+          requestAnimationFrame(deathAnim);
+        }else{
+          // Fallback if god model not found
+          setTimeout(()=>{
+            flash1.remove();
+            origCustomEnding.call(this,title,copy);
+          },1500);
+        }
+        return;
+      }
+      // Non-boss endings pass through
+      return origCustomEnding.apply(this,arguments);
+    };
+  }
+
+  // --- ENHANCED BOSS HP & PHASE MARKERS ON BAR ---
+  (function bossBarEnhancements(){
+    let lastBossPhase=0;
+    function bossBarTick(){
+      requestAnimationFrame(bossBarTick);
+      if(!STATE.bossActive)return;
+      const phase=STATE.bossPhase||1;
+
+      // Update sub text per phase
+      const bsub=document.getElementById('boss-sub');
+      if(bsub){
+        if(phase>=3)bsub.textContent='PHASE 3: DESPERATE FURY · TRIPLE TELEGRAPHS · FAST GHOSTS';
+        else if(phase>=2)bsub.textContent='PHASE 2: ENRAGED · DODGE THE DOMES · KILL GHOSTS FOR AMMO';
+        else bsub.textContent='PHASE 1: DODGE THE DOMES · KILL GHOSTS FOR AMMO';
+      }
+
+      // Phase markers on boss bar
+      const bossBar=document.getElementById('boss-bar');
+      if(bossBar&&!bossBar.querySelector('.phase-marker')){
+        // Add phase transition markers at 50% and 20%
+        const m1=document.createElement('div');
+        m1.className='phase-marker';
+        m1.style.cssText='position:absolute;left:50%;top:0;bottom:0;width:2px;background:rgba(255,255,255,.5);z-index:2;';
+        const m2=document.createElement('div');
+        m2.className='phase-marker';
+        m2.style.cssText='position:absolute;left:20%;top:0;bottom:0;width:2px;background:rgba(200,100,255,.6);z-index:2;';
+        bossBar.style.position='relative';
+        bossBar.appendChild(m1);
+        bossBar.appendChild(m2);
+      }
+    }
+    requestAnimationFrame(bossBarTick);
+  })();
+
+  // --- INCREASE BOSS MAX HP FOR BETTER FIGHT ---
+  const origStartBossFight=window.startBossFight;
+  if(origStartBossFight){
+    window.startBossFight=function(){
+      origStartBossFight.apply(this,arguments);
+      // Increase boss HP for a longer, more epic fight
+      STATE.bossMaxHealth=50;
+      STATE.bossHealth=50;
+      if(window.updateBossBar)updateBossBar();
+      // Reset kill badges for boss fight
+      KILL_BADGES.rapidKillCount=0;
+      // Show dramatic start message
+      if(window.showToast)showToast('⚔️ THE FINAL BATTLE BEGINS ⚔️<br>3 PHASES · 50 HP · FIGHT FOR YOUR LIFE',3500);
+    };
+  }
+
+})();
+
+/* ============================================================
+   4) ENHANCED KILL FEED WITH WEAPON ICONS
+   ============================================================ */
+(function enhancedKillFeed(){
+  if(!window.COMBO)return;
+  const origAddKillFeed=COMBO.addKillFeed.bind(COMBO);
+  COMBO.addKillFeed=function(name,bonus){
+    const entry=document.createElement('div');
+    entry.className='kill-entry';
+
+    // Weapon icon based on current weapon
+    let weaponIcon='⦻';
+    try{
+      const w=window.curWep?curWep():null;
+      if(w){
+        const icons={rifle:'🔫',shotgun:'💥',smg:'🔫',magnum:'🔫',ar:'🔫'};
+        weaponIcon=icons[w.id]||'⦻';
+      }
+    }catch(e){}
+
+    // Color code by enemy type
+    let nameColor='#ff6644';
+    if(name.includes('GOD'))nameColor='#ff0';
+    else if(name.includes('BEAR'))nameColor='#ff4444';
+    else if(name.includes('BOSS'))nameColor='#66ccff';
+    else if(name.includes('HEADSHOT'))nameColor='#ff2222';
+
+    entry.innerHTML=`<span style="color:${nameColor}">${weaponIcon}</span> <span style="color:${nameColor}">${name}</span> <span style="color:#ffd700">+${bonus}🪙</span>`;
+
+    this.feedEl.appendChild(entry);
+    setTimeout(()=>{entry.classList.add('fade-out');},2500);
+    setTimeout(()=>{entry.remove();},3100);
+    while(this.feedEl.children.length>6)this.feedEl.firstChild.remove();
+  };
+})();
+
+/* ============================================================
+   5) SMOOTHER SCREEN TRANSITIONS
+   ============================================================ */
+(function smoothTransitions(){
+  // Smoother black screen fades
+  const bs=document.getElementById('black-screen');
+  if(bs)bs.style.transition='opacity 2s cubic-bezier(.25,.8,.25,1)';
+
+  // Smoother damage vignette
+  const dv=document.getElementById('damage-vignette');
+  if(dv)dv.style.transition='opacity .25s cubic-bezier(.25,.8,.25,1)';
+
+  // Smoother menu transitions
+  document.querySelectorAll('.menu-screen').forEach(m=>{
+    m.style.transition='opacity .4s ease';
+  });
+})();
+
+})();
+</script>
 </body>
 </html>

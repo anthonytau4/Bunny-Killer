@@ -12,6 +12,14 @@
 #game-canvas{position:absolute;inset:0;width:100vw;height:100vh;object-fit:cover;image-rendering:pixelated;z-index:1;background:#020302}
 #crt-overlay{position:absolute;inset:0;background:radial-gradient(circle,rgba(0,0,0,0) 65%,rgba(0,0,0,.65) 100%),linear-gradient(rgba(18,16,16,0) 50%,var(--crt-line) 50%),linear-gradient(90deg,rgba(255,0,0,.06),rgba(0,255,0,.02),rgba(0,0,255,.06));background-size:100% 100%,100% 4px,3px 100%;z-index:10;pointer-events:none;mix-blend-mode:overlay;opacity:0.15;}
 #crt-overlay::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg,rgba(255,255,255,.02),transparent 10%,transparent 90%,rgba(0,0,0,.2));opacity:.15}
+#vhs-canvas{position:absolute;inset:0;width:100vw;height:100vh;z-index:2;pointer-events:none;image-rendering:pixelated}
+#damage-vignette{position:absolute;inset:0;z-index:11;pointer-events:none;opacity:0;transition:opacity .15s ease;background:radial-gradient(circle,transparent 40%,rgba(180,0,0,.7) 100%)}
+#combo-display{position:absolute;top:28%;left:50%;transform:translateX(-50%);z-index:25;pointer-events:none;font-size:2.5rem;font-weight:bold;color:#ffd700;text-shadow:0 0 20px #ff8800,3px 3px 0 #000;opacity:0;transition:opacity .3s ease,transform .3s ease;letter-spacing:4px}
+#kill-feed{position:absolute;top:35%;right:2rem;z-index:25;pointer-events:none;text-align:right;font-size:.9rem;color:#fff;text-shadow:2px 2px 0 #000}
+#kill-feed .kill-entry{opacity:0;transform:translateX(20px);animation:killFeedIn .3s ease forwards;margin-bottom:4px}
+@keyframes killFeedIn{to{opacity:1;transform:translateX(0)}}
+.kill-entry.fade-out{animation:killFeedOut .5s ease forwards}
+@keyframes killFeedOut{to{opacity:0;transform:translateX(-20px)}}
 #ui-layer{position:absolute;inset:0;z-index:20;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding:2rem;color:var(--ui-color);text-shadow:2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000}
 .hud-top{display:flex;justify-content:space-between;align-items:flex-start;font-size:1.15rem;font-weight:bold;letter-spacing:2px}.hud-stack{display:flex;flex-direction:column;gap:.4rem}.hud-small{font-size:.8rem;letter-spacing:1px;color:rgba(210,235,190,.9)}
 .hud-bottom{display:flex;justify-content:space-between;align-items:flex-end;font-size:1.35rem}.panel{background:rgba(2,3,2,.65);border:2px solid rgba(168,208,141,.4);padding:.75rem 1rem;box-shadow:inset 0 0 15px rgba(0,0,0,.9),0 0 20px rgba(0,0,0,.5);backdrop-filter:blur(1px)}
@@ -67,6 +75,10 @@
 </head>
 <body>
 <canvas id="game-canvas"></canvas>
+<canvas id="vhs-canvas"></canvas>
+<div id="damage-vignette"></div>
+<div id="combo-display"></div>
+<div id="kill-feed"></div>
 <div id="crt-overlay"></div>
 <div id="jumpscare-overlay"></div>
 <div id="toast"></div>
@@ -254,6 +266,7 @@ function damagePlayer(n,source){
     AudioEngine.playScare();
     showToast(source+' HIT YOU. HEALTH '+Math.round(STATE.health),1300);
     pitch -= 0.15; yaw += (Math.random()-0.5)*0.1;
+    SCREEN_FX.flashDamage();
     if(STATE.health<=0){STATE.deadReason=source;triggerDeath(source)}
 }
 function triggerDeath(source){
@@ -281,7 +294,9 @@ function shootEnemy(enemy){
     spawnBlood(enemy.group.position.x, enemy.group.position.y+1, enemy.group.position.z);
     if(enemy.hp<=0){
         addScore(enemy.kind==='bear'?150:40);
+        const killName = enemy.kind==='bear'?'BUNNY-BEAR':enemy.kind==='bossghost'?'BOSS GHOST':'VENGEFUL GHOST';
         showToast(enemy.kind==='bear'?'BUNNY-BEAR DOWN. WELL SPENT.':'VENGEFUL BUNNY GHOST DISPERSED.',1200);
+        COMBO.registerKill(killName);
         spawnCoin(enemy.group.position.x, enemy.group.position.z, enemy.kind==='bear'?10:5);
         if(enemy.kind==='bossghost') dropAmmo(enemy.group.position.x, enemy.group.position.z, 2);
         scene.remove(enemy.group);
@@ -450,6 +465,8 @@ function hitGod(part='body'){
   STATE.bossHealth=Math.max(0,STATE.bossHealth-dmg);
   AudioEngine.playNoise(.25,'bandpass',300,.5);showToast(part==='head'?'HEADSHOT ON GOD.':'GOD BLEEDS.',800);
   updateBossBar();
+  VHS.triggerGlitch(part==='head'?0.4:0.15);
+  COMBO.registerKill(part==='head'?'GOD (HEADSHOT)':'GOD');
   if(STATE.bossHealth<=0){customEnding('GOD IS WOUNDED','You refuse the altar. Your rifle tears through holiness and fur.<br><br>The woods will never forgive you, but they will remember your defiance.');}
 }
 
@@ -616,6 +633,342 @@ dirLight.shadow.camera.top=200;
 dirLight.shadow.camera.bottom=-200;
 dirLight.shadow.bias=-.0005; 
 scene.add(dirLight);
+
+// ============================================================
+// === AMAZING ENHANCEMENT SYSTEMS ===
+// ============================================================
+
+// --- VHS POST-PROCESSING SHADER ---
+const vhsCanvas = document.getElementById('vhs-canvas');
+const vhsCtx = vhsCanvas.getContext('2d');
+vhsCanvas.width = window.innerWidth;
+vhsCanvas.height = window.innerHeight;
+
+const VHS = {
+  enabled: true,
+  intensity: 0.5,
+  time: 0,
+  glitchTimer: 0,
+  glitchDuration: 0,
+  glitchActive: false,
+  trackingOffset: 0,
+  update(dt, dayIdx) {
+    this.time += dt;
+    const dayMult = 1 + dayIdx * 0.25;
+    this.intensity = 0.4 + dayIdx * 0.15;
+    // Random tracking glitches
+    if (!this.glitchActive && Math.random() < 0.002 * dayMult) {
+      this.glitchActive = true;
+      this.glitchDuration = 0.05 + Math.random() * 0.15;
+      this.glitchTimer = 0;
+    }
+    if (this.glitchActive) {
+      this.glitchTimer += dt;
+      this.trackingOffset = (Math.random() - 0.5) * 8 * dayMult;
+      if (this.glitchTimer > this.glitchDuration) {
+        this.glitchActive = false;
+        this.trackingOffset = 0;
+      }
+    }
+  },
+  render(sourceCanvas) {
+    if (!this.enabled) return;
+    const w = vhsCanvas.width, h = vhsCanvas.height;
+    const ctx = vhsCtx;
+    ctx.clearRect(0, 0, w, h);
+    // Chromatic aberration
+    const aberration = 2 + this.intensity * 3;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(sourceCanvas, 0, 0, w, h);
+    // RGB split
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = `rgba(255,0,0,0.03)`;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = 0.08 * this.intensity;
+    ctx.drawImage(sourceCanvas, aberration, 0, w, h);
+    ctx.drawImage(sourceCanvas, -aberration, 0, w, h);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    // Scanlines
+    ctx.fillStyle = 'rgba(0,0,0,0.04)';
+    for (let y = 0; y < h; y += 3) {
+      ctx.fillRect(0, y, w, 1);
+    }
+    // Tracking band
+    if (this.glitchActive) {
+      const bandY = (this.time * 200 + this.trackingOffset * 50) % h;
+      const bandH = 3 + Math.random() * 12;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, bandY, w, bandH);
+      ctx.clip();
+      ctx.drawImage(sourceCanvas, this.trackingOffset, bandY, w, bandH, 0, bandY, w, bandH);
+      ctx.restore();
+    }
+    // Film grain
+    const grainIntensity = 15 * this.intensity;
+    const imgData = ctx.getImageData(0, 0, Math.min(w, 320), Math.min(h, 240));
+    const px = imgData.data;
+    for (let i = 0; i < px.length; i += 16) {
+      const noise = (Math.random() - 0.5) * grainIntensity;
+      px[i] += noise;
+      px[i+1] += noise;
+      px[i+2] += noise;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    // Vignette
+    const grad = ctx.createRadialGradient(w/2, h/2, w*0.3, w/2, h/2, w*0.7);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, `rgba(0,0,0,${0.4 + this.intensity * 0.2})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    // Tape wobble - subtle horizontal displacement
+    const wobble = Math.sin(this.time * 3) * 0.5 * this.intensity;
+    ctx.translate(wobble, 0);
+  },
+  triggerGlitch(duration) {
+    this.glitchActive = true;
+    this.glitchDuration = duration || 0.3;
+    this.glitchTimer = 0;
+  }
+};
+
+// --- ATMOSPHERIC PARTICLE SYSTEM ---
+const PARTICLES = {
+  dustMotes: null,
+  fireflies: null,
+  bloodBurst: [],
+  init() {
+    // Dust motes - always floating in forest
+    const dustCount = 200;
+    const dustGeo = new THREE.BufferGeometry();
+    const dustPos = new Float32Array(dustCount * 3);
+    const dustVel = new Float32Array(dustCount * 3);
+    for (let i = 0; i < dustCount; i++) {
+      dustPos[i*3] = (Math.random()-0.5) * 60;
+      dustPos[i*3+1] = Math.random() * 15 + 1;
+      dustPos[i*3+2] = (Math.random()-0.5) * 60;
+      dustVel[i*3] = (Math.random()-0.5) * 0.2;
+      dustVel[i*3+1] = (Math.random()-0.5) * 0.05;
+      dustVel[i*3+2] = (Math.random()-0.5) * 0.2;
+    }
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    const dustMat = new THREE.PointsMaterial({
+      size: 0.08,
+      color: 0xffeedd,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    this.dustMotes = new THREE.Points(dustGeo, dustMat);
+    this.dustMotes._velocities = dustVel;
+    scene.add(this.dustMotes);
+
+    // Fireflies - glow at night
+    const ffCount = 50;
+    const ffGeo = new THREE.BufferGeometry();
+    const ffPos = new Float32Array(ffCount * 3);
+    const ffPhase = new Float32Array(ffCount);
+    for (let i = 0; i < ffCount; i++) {
+      ffPos[i*3] = (Math.random()-0.5) * 80;
+      ffPos[i*3+1] = Math.random() * 4 + 1;
+      ffPos[i*3+2] = (Math.random()-0.5) * 80;
+      ffPhase[i] = Math.random() * Math.PI * 2;
+    }
+    ffGeo.setAttribute('position', new THREE.BufferAttribute(ffPos, 3));
+    const ffMat = new THREE.PointsMaterial({
+      size: 0.15,
+      color: 0x88ff44,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    this.fireflies = new THREE.Points(ffGeo, ffMat);
+    this.fireflies._phases = ffPhase;
+    scene.add(this.fireflies);
+  },
+  update(dt, camPos, dayIdx) {
+    // Update dust motes - follow camera loosely
+    if (this.dustMotes) {
+      const pos = this.dustMotes.geometry.attributes.position.array;
+      const vel = this.dustMotes._velocities;
+      for (let i = 0; i < pos.length; i += 3) {
+        pos[i] += vel[i] * dt;
+        pos[i+1] += vel[i+1] * dt + Math.sin(Date.now()*0.001 + i) * 0.002;
+        pos[i+2] += vel[i+2] * dt;
+        // Wrap around camera
+        if (Math.abs(pos[i] - camPos.x) > 30) pos[i] = camPos.x + (Math.random()-0.5)*60;
+        if (pos[i+1] < 0 || pos[i+1] > 16) pos[i+1] = Math.random() * 15 + 1;
+        if (Math.abs(pos[i+2] - camPos.z) > 30) pos[i+2] = camPos.z + (Math.random()-0.5)*60;
+      }
+      this.dustMotes.geometry.attributes.position.needsUpdate = true;
+      // Dust is more visible in daylight
+      this.dustMotes.material.opacity = dayIdx < 3 ? 0.4 : 0.2;
+    }
+    // Update fireflies - visible from day 2 onward
+    if (this.fireflies) {
+      const ffPos = this.fireflies.geometry.attributes.position.array;
+      const phases = this.fireflies._phases;
+      const t = Date.now() * 0.001;
+      for (let i = 0; i < ffPos.length / 3; i++) {
+        ffPos[i*3] += Math.sin(t + phases[i]) * 0.01;
+        ffPos[i*3+1] += Math.cos(t * 0.7 + phases[i]) * 0.005;
+        ffPos[i*3+2] += Math.cos(t + phases[i] * 2) * 0.01;
+        if (Math.abs(ffPos[i*3] - camPos.x) > 40) ffPos[i*3] = camPos.x + (Math.random()-0.5)*80;
+        if (Math.abs(ffPos[i*3+2] - camPos.z) > 40) ffPos[i*3+2] = camPos.z + (Math.random()-0.5)*80;
+      }
+      this.fireflies.geometry.attributes.position.needsUpdate = true;
+      // Fireflies glow more on later days (creepier atmosphere)
+      const ffOpacity = dayIdx >= 2 ? 0.3 + Math.sin(t * 2) * 0.15 : 0;
+      this.fireflies.material.opacity = ffOpacity;
+      this.fireflies.material.color.setHex(dayIdx >= 4 ? 0xff4444 : 0x88ff44);
+    }
+  }
+};
+
+// --- KILL COMBO SYSTEM ---
+const COMBO = {
+  count: 0,
+  timer: 0,
+  maxTime: 3.5,
+  multiplier: 1,
+  bestCombo: 0,
+  totalBonusCoins: 0,
+  displayEl: document.getElementById('combo-display'),
+  feedEl: document.getElementById('kill-feed'),
+  registerKill(enemyName) {
+    this.count++;
+    this.timer = this.maxTime;
+    this.multiplier = Math.min(1 + (this.count - 1) * 0.5, 5);
+    if (this.count > this.bestCombo) this.bestCombo = this.count;
+    // Bonus coins for combos
+    const bonus = Math.floor(this.count * this.multiplier);
+    this.totalBonusCoins += bonus;
+    STATE.coins += bonus;
+    // Update display
+    this.updateDisplay();
+    this.addKillFeed(enemyName, bonus);
+    // Trigger VHS glitch on big combos
+    if (this.count >= 3) VHS.triggerGlitch(0.1);
+    if (this.count >= 5) VHS.triggerGlitch(0.3);
+  },
+  updateDisplay() {
+    if (this.count >= 2) {
+      this.displayEl.style.opacity = '1';
+      this.displayEl.style.transform = 'translateX(-50%) scale(1.2)';
+      this.displayEl.textContent = `${this.count}x COMBO ×${this.multiplier.toFixed(1)}`;
+      setTimeout(() => { this.displayEl.style.transform = 'translateX(-50%) scale(1)'; }, 100);
+    }
+  },
+  addKillFeed(name, bonus) {
+    const entry = document.createElement('div');
+    entry.className = 'kill-entry';
+    entry.innerHTML = `<span style="color:#ff6644">⦻</span> ${name} <span style="color:#ffd700">+${bonus}🪙</span>`;
+    this.feedEl.appendChild(entry);
+    setTimeout(() => { entry.classList.add('fade-out'); }, 2000);
+    setTimeout(() => { entry.remove(); }, 2500);
+    // Keep feed short
+    while (this.feedEl.children.length > 5) this.feedEl.firstChild.remove();
+  },
+  update(dt) {
+    if (this.timer > 0) {
+      this.timer -= dt;
+      if (this.timer <= 0) {
+        this.count = 0;
+        this.multiplier = 1;
+        this.displayEl.style.opacity = '0';
+      }
+    }
+  }
+};
+
+// --- DAMAGE/HORROR SCREEN EFFECTS ---
+const SCREEN_FX = {
+  damageVignette: document.getElementById('damage-vignette'),
+  damageTimer: 0,
+  lowHealthPulse: 0,
+  flashDamage() {
+    this.damageTimer = 0.4;
+    this.damageVignette.style.opacity = '0.8';
+    VHS.triggerGlitch(0.15);
+  },
+  flashHeal() {
+    this.damageVignette.style.background = 'radial-gradient(circle,transparent 40%,rgba(0,180,60,.5) 100%)';
+    this.damageVignette.style.opacity = '0.5';
+    setTimeout(() => {
+      this.damageVignette.style.background = 'radial-gradient(circle,transparent 40%,rgba(180,0,0,.7) 100%)';
+      this.damageVignette.style.opacity = '0';
+    }, 300);
+  },
+  update(dt) {
+    if (this.damageTimer > 0) {
+      this.damageTimer -= dt;
+      this.damageVignette.style.opacity = String(Math.max(0, this.damageTimer * 2));
+    }
+    // Low health pulse
+    if (STATE.health < STATE.maxHealth * 0.3 && STATE.health > 0) {
+      this.lowHealthPulse += dt * 4;
+      const pulse = Math.sin(this.lowHealthPulse) * 0.3 + 0.3;
+      this.damageVignette.style.opacity = String(pulse);
+    }
+  }
+};
+
+// --- ENHANCED AMBIENT AUDIO ---
+const AMBIENT = {
+  windOsc: null,
+  windGain: null,
+  creakTimer: 0,
+  heartbeatTimer: 0,
+  init() {
+    try {
+      const ctx = AudioEngine.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      // Wind layer
+      const bufSize = ctx.sampleRate * 2;
+      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * 0.3;
+      this.windOsc = ctx.createBufferSource();
+      this.windOsc.buffer = buf;
+      this.windOsc.loop = true;
+      this.windGain = ctx.createGain();
+      this.windGain.gain.value = 0;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 200;
+      this.windOsc.connect(filter);
+      filter.connect(this.windGain);
+      this.windGain.connect(ctx.destination);
+      this.windOsc.start();
+    } catch(e) { /* audio not available */ }
+  },
+  update(dt, dayIdx) {
+    if (this.windGain) {
+      // Wind gets stronger on later days
+      const targetVol = 0.02 + dayIdx * 0.015;
+      this.windGain.gain.value += (targetVol - this.windGain.gain.value) * 0.01;
+    }
+    // Random creaking sounds
+    this.creakTimer -= dt;
+    if (this.creakTimer <= 0 && dayIdx >= 2) {
+      this.creakTimer = 5 + Math.random() * 15;
+      if (typeof AudioEngine !== 'undefined' && AudioEngine.playTone) {
+        AudioEngine.playTone(30 + Math.random()*20, 0.8, 'sine', 0.02);
+      }
+    }
+  }
+};
+
+// Init enhancement systems
+PARTICLES.init();
+// AMBIENT.init() called on first user interaction to avoid autoplay policy
+let ambientInited = false;
+document.addEventListener('click', function initAmbient() {
+  if (!ambientInited) { AMBIENT.init(); ambientInited = true; }
+}, { once: false });
 
 const colliders=[];
 const matGround=new THREE.MeshStandardMaterial({color:0x1a2418,roughness:1, metalness:0});
@@ -1419,10 +1772,11 @@ function applySettings(){
   SETTINGS.headBob=$('set-headbob').checked;
   SETTINGS.sensitivity=parseFloat($('set-sens').value);
   $('crt-overlay').style.display=SETTINGS.crt?'block':'none';
+  if(vhsCanvas)vhsCanvas.style.display=SETTINGS.crt?'block':'none';
   resizeRenderer();
   canvas.style.imageRendering = SETTINGS.lowRes ? 'pixelated' : 'auto';
 }
-function resizeRenderer(){renderScale=SETTINGS.lowRes?2.5:1;renderWidth=window.innerWidth/renderScale;renderHeight=window.innerHeight/renderScale;renderer.setSize(renderWidth,renderHeight,false);camera.aspect=renderWidth/renderHeight;camera.updateProjectionMatrix()}
+function resizeRenderer(){renderScale=SETTINGS.lowRes?2.5:1;renderWidth=window.innerWidth/renderScale;renderHeight=window.innerHeight/renderScale;renderer.setSize(renderWidth,renderHeight,false);camera.aspect=renderWidth/renderHeight;camera.updateProjectionMatrix();if(vhsCanvas){vhsCanvas.width=window.innerWidth;vhsCanvas.height=window.innerHeight}}
 
 function startGame(){AudioEngine.init();AudioEngine.resume();$('main-menu').classList.add('hidden');$('ui-layer').classList.remove('hidden');$('crosshair').classList.remove('hidden');$('scope-overlay').style.display='none';fadeScreen(false);STATE.gameStarted=true;STATE.isPaused=false;STATE.inCabin=false;yaw=0;pitch=0;STATE.godCountdown=-1;STATE.godHasArrived=false;STATE.godSequenceActive=false;STATE.godRevealReady=false;STATE.godSeen=false;STATE.godSpawned=false;watcher.position.y=-100;updateHUD();spawnAnimals(STATE.targetAnimals+10);clock.start();requestLock();AudioEngine.updateAmbient(STATE.day,false);showToast('WELCOME TO HAPPY BUNNY. THE FOREST MISSED YOU.',2200)}
 
@@ -1863,7 +2217,21 @@ function animate(){
       STATE.lastHudUpdate = clock.elapsedTime;
   }
   
+  // --- ENHANCEMENT SYSTEMS UPDATE ---
+  const enhDt = Math.min(clock.getDelta() || 0.016, 0.1);
+  const dayIdx = STATE.day || 0;
+  VHS.update(enhDt, dayIdx);
+  PARTICLES.update(enhDt, camera.position, dayIdx);
+  COMBO.update(enhDt);
+  SCREEN_FX.update(enhDt);
+  AMBIENT.update(enhDt, dayIdx);
+  
   renderer.render(scene,camera);
+  
+  // VHS post-process pass (renders on top via 2D canvas overlay)
+  if (VHS.enabled && SETTINGS.crt) {
+    VHS.render(canvas);
+  }
 }
 
 function dlcTick(){

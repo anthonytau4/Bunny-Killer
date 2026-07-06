@@ -3000,6 +3000,17 @@ function applyBrightDayFiveLighting(force=false){
   if(STATE.day!==5)return;
   if(!force&&performance.now()-(STATE.lastBrightDay5Light||0)<300)return;
   STATE.lastBrightDay5Light=performance.now();
+  if(STATE.arenaFight){
+    // Boss arena: drop into a dark, blood-lit mood so the red telegraphs and
+    // God's glow read clearly instead of the washed-out bright Day 5 look.
+    scene.fog.color.setHex(0x1a0406);
+    scene.fog.density=.02;
+    renderer.setClearColor(0x140306);
+    dirLight.color.setHex(0xff5a4a);dirLight.intensity=.35;
+    ambientLight.color.setHex(0x552028);ambientLight.intensity=.34;
+    if(DLC.day5Lights)DLC.day5Lights.forEach(l=>{l.visible=false;});
+    return;
+  }
   scene.fog.color.setHex(0xa7b79c);
   scene.fog.density=STATE.godHasArrived?.014:.010;
   renderer.setClearColor(0xb8c8aa);
@@ -4337,6 +4348,9 @@ window.addEventListener('keydown',function(e){
     w.scale.setScalar(1.0);
     return w;
   }
+  // Main-scope updateWinCutscene calls ensureWife() as a bare global; expose it
+  // so beating the God fight no longer throws every frame during the win cutscene.
+  window.ensureWife=ensureWife;
   window.updateWifeStand=function(delta){
     const wife=ensureWife();
     wife.visible=true;
@@ -8212,14 +8226,15 @@ window.addEventListener('keydown',function(e){
     const dt=Math.min(.1,(now-lastPostT)/1000);lastPostT=now;
     const day=STATE.day||1;
     if(Math.random()<dt*(day>=4?.9:day>=3?.35:.10))glitchEnv=Math.min(1,glitchEnv+.55+Math.random()*.45);
-    if(STATE.godSequenceActive)glitchEnv=Math.max(glitchEnv,.5);
+    if(STATE.arenaFight)glitchEnv=Math.max(glitchEnv,.12); // keep the dodge fight readable; attacks/hits still spike it
+    else if(STATE.godSequenceActive)glitchEnv=Math.max(glitchEnv,.5);
     else if(STATE.bossActive)glitchEnv=Math.max(glitchEnv,.16); // low floor; attacks/hits spike it
     glitchEnv=Math.max(0,glitchEnv-dt*2.6);
     const u=post.mat.uniforms;
     u.uT.value=now/1000;
     u.uAmt.value=SETTINGS.crt?1:.35;
     u.uGlitch.value=glitchEnv*(SETTINGS.crt?1:.4);
-    u.uDread.value=clamp((day-1)/4*.8+(STATE.threatHeat||0)/130*.25+(STATE.godSequenceActive?.6:0),0,1);
+    u.uDread.value=STATE.arenaFight?0.5:clamp((day-1)/4*.8+(STATE.threatHeat||0)/130*.25+(STATE.godSequenceActive?.6:0),0,1);
   }
 
   // Later layers can spike the glitch envelope (boss hits, slams, damage).
@@ -9068,6 +9083,669 @@ window.addEventListener('keydown',function(e){
       }catch(e){}
       return r;
     };
+  }
+})();
+
+
+/* === VHS AUDIO + HORROR MUSIC + GOD ENCOUNTER/ARENA REMASTER ===
+   1) Sound remaster: layered per-weapon gunshots, metallic clicks, dirt
+      footsteps, creaking doors, wetter scares. 2) An escalating procedural
+      horror score that ramps through the god countdown, swells at his
+      arrival, and drives the boss fight. 3) God arrival: forced look, the
+      Succumb/Fight menu, and a head-rip fail cutscene on Succumb.
+   4) A dedicated boss arena with four clearly telegraphed attacks and fair
+      dodge windows; empty his health bar to win. */
+(function(){
+  if(window.__vhsAudioGodRemaster)return;
+  window.__vhsAudioGodRemaster=true;
+
+  const A=AudioEngine;
+  const TAU=Math.PI*2;
+  const HALF=Math.PI/2;
+  function actx(){return A.ctx;}
+  function anow(){return A.ctx?A.ctx.currentTime:0;}
+  function makeNoise(dur){
+    const c=A.ctx;const n=Math.max(1,Math.floor(c.sampleRate*dur));
+    const b=c.createBuffer(1,n,c.sampleRate);const d=b.getChannelData(0);
+    for(let i=0;i<n;i++)d[i]=Math.random()*2-1;
+    const s=c.createBufferSource();s.buffer=b;return s;
+  }
+  function angDiff(a,b){return Math.atan2(Math.sin(a-b),Math.cos(a-b));}
+
+  /* ================= 1) SOUND REMASTER ================= */
+  function gunLayer(o){
+    const c=A.ctx;if(!c)return;const t=c.currentTime;
+    const out=c.createGain();out.gain.value=o.gain;out.connect(A.masterGain);
+    // sharp crack transient (high-passed noise)
+    const cr=makeNoise(.06);const chp=c.createBiquadFilter();chp.type='highpass';chp.frequency.value=o.crackF;
+    const cg=c.createGain();cg.gain.setValueAtTime(o.crackV,t);cg.gain.exponentialRampToValueAtTime(.0008,t+.055);
+    cr.connect(chp);chp.connect(cg);cg.connect(out);cr.start(t);cr.stop(t+.07);
+    // body report (low-passed noise burst)
+    const bo=makeNoise(.2);const bf=c.createBiquadFilter();bf.type='lowpass';bf.frequency.value=o.bodyF;bf.Q.value=1.1;
+    const bg=c.createGain();bg.gain.setValueAtTime(o.bodyV,t);bg.gain.exponentialRampToValueAtTime(.0008,t+.19);
+    bo.connect(bf);bf.connect(bg);bg.connect(out);bo.start(t);bo.stop(t+.21);
+    // pressure thump (pitch-dropping sine)
+    const th=c.createOscillator();th.type='sine';th.frequency.setValueAtTime(o.thumpF,t);th.frequency.exponentialRampToValueAtTime(o.thumpF*.5,t+.12);
+    const tg=c.createGain();tg.gain.setValueAtTime(o.thumpV,t);tg.gain.exponentialRampToValueAtTime(.0008,t+.17);
+    th.connect(tg);tg.connect(out);th.start(t);th.stop(t+.19);
+    // decaying tail (reverb-ish low noise)
+    const ta=makeNoise(o.tailLen);const tf=c.createBiquadFilter();tf.type='lowpass';tf.frequency.setValueAtTime(o.tailF,t);tf.frequency.exponentialRampToValueAtTime(o.tailF*.4,t+o.tailLen);
+    const tag=c.createGain();tag.gain.setValueAtTime(.0008,t);tag.gain.linearRampToValueAtTime(o.tailV,t+.03);tag.gain.exponentialRampToValueAtTime(.0008,t+o.tailLen);
+    ta.connect(tf);tf.connect(tag);tag.connect(out);ta.start(t);ta.stop(t+o.tailLen+.03);
+  }
+  A.playWeaponFire=function(id){
+    if(!A.ctx)return;
+    switch(id){
+      case 'magnum': gunLayer({crackF:2400,crackV:.85,bodyF:380,bodyV:.85,tailF:900,tailV:.5,tailLen:1.5,thumpF:120,thumpV:1.05,gain:.95});break;
+      case 'rifle':  gunLayer({crackF:3000,crackV:1.0,bodyF:520,bodyV:.72,tailF:1100,tailV:.46,tailLen:1.7,thumpF:98,thumpV:.9,gain:.92});break;
+      case 'shotgun':gunLayer({crackF:2300,crackV:.82,bodyF:420,bodyV:.7,tailF:850,tailV:.4,tailLen:1.0,thumpF:110,thumpV:.78,gain:.86});break;
+      case 'ar':     gunLayer({crackF:2900,crackV:.7,bodyF:640,bodyV:.5,tailF:1250,tailV:.26,tailLen:.5,thumpF:135,thumpV:.5,gain:.72});break;
+      case 'smg':    gunLayer({crackF:3300,crackV:.72,bodyF:700,bodyV:.5,tailF:1350,tailV:.24,tailLen:.55,thumpF:120,thumpV:.5,gain:.72});break;
+      default:       gunLayer({crackF:2600,crackV:.8,bodyF:460,bodyV:.6,tailF:1000,tailV:.4,tailLen:1.1,thumpF:110,thumpV:.72,gain:.82});
+    }
+  };
+  // route all weapon audio through playWeaponFire: mute the inner gun calls,
+  // play our dedicated sound if a round was actually fired.
+  const _prevFireAudio=fireWeapon;
+  fireWeapon=function(){
+    const w=curWep&&curWep();
+    const before=w?w.ammo:0;
+    const g=A.playGunshot,pn=A.playNoise;
+    A.playGunshot=function(){};A.playNoise=function(){};
+    let r;
+    try{r=_prevFireAudio.apply(this,arguments);}
+    finally{A.playGunshot=g;A.playNoise=pn;}
+    try{if(w&&w.ammo<before)A.playWeaponFire(w.id);}catch(e){}
+    return r;
+  };
+  // god flesh-hit impact (direct synth so it survives the fire-mute above)
+  function godHitSound(head){
+    const c=A.ctx;if(!c)return;const t=c.currentTime;
+    const o=c.createOscillator();o.type='sine';o.frequency.setValueAtTime(head?280:160,t);o.frequency.exponentialRampToValueAtTime(head?90:55,t+.16);
+    const gg=c.createGain();gg.gain.setValueAtTime(head?.55:.42,t);gg.gain.exponentialRampToValueAtTime(.0008,t+.2);
+    o.connect(gg);gg.connect(A.masterGain);o.start(t);o.stop(t+.22);
+    const n=makeNoise(.14);const f=c.createBiquadFilter();f.type='bandpass';f.frequency.value=head?950:520;f.Q.value=.8;
+    const ng=c.createGain();ng.gain.setValueAtTime(head?.4:.3,t);ng.gain.exponentialRampToValueAtTime(.0008,t+.13);
+    n.connect(f);f.connect(ng);ng.connect(A.masterGain);n.start(t);n.stop(t+.14);
+  }
+  if(typeof hitGod==='function'){
+    const _prevHitGod=hitGod;
+    hitGod=function(part){try{godHitSound(part==='head');}catch(e){}return _prevHitGod.apply(this,arguments);};
+  }
+
+  // metallic double click for reloads/handling
+  A.playMechanicalClick=function(pitchMod=1,vol=.45){
+    const c=A.ctx;if(!c)return;const t=c.currentTime;
+    function tick(tt,f,v,dur){
+      const n=makeNoise(dur);const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=f;bp.Q.value=7;
+      const gn=c.createGain();gn.gain.setValueAtTime(v,tt);gn.gain.exponentialRampToValueAtTime(.0006,tt+dur);
+      n.connect(bp);bp.connect(gn);gn.connect(A.masterGain);n.start(tt);n.stop(tt+dur+.01);
+      const o=c.createOscillator();o.type='square';o.frequency.setValueAtTime(f*1.4,tt);o.frequency.exponentialRampToValueAtTime(f*.6,tt+dur*.7);
+      const og=c.createGain();og.gain.setValueAtTime(v*.5,tt);og.gain.exponentialRampToValueAtTime(.0006,tt+dur*.8);
+      o.connect(og);og.connect(A.masterGain);o.start(tt);o.stop(tt+dur);
+    }
+    tick(t,2600*pitchMod,vol*.9,.02);
+    tick(t+.045,1500*pitchMod,vol*.7,.03);
+  };
+  // soft dirt/leaf footstep
+  A.playFootstep=function(vol=.15){
+    const c=A.ctx;if(!c)return;const t=c.currentTime;
+    const base=140+Math.random()*90;
+    const n=makeNoise(.11);const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=base;lp.Q.value=.6;
+    const gn=c.createGain();gn.gain.setValueAtTime(vol*1.4,t);gn.gain.exponentialRampToValueAtTime(.0006,t+.1);
+    n.connect(lp);lp.connect(gn);gn.connect(A.masterGain);n.start(t);n.stop(t+.11);
+    if(Math.random()<.7){
+      const cr=makeNoise(.05);const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=1800+Math.random()*1200;bp.Q.value=1.5;
+      const cg=c.createGain();cg.gain.setValueAtTime(vol*.35,t);cg.gain.exponentialRampToValueAtTime(.0006,t+.045);
+      cr.connect(bp);bp.connect(cg);cg.connect(A.masterGain);cr.start(t);cr.stop(t+.05);
+    }
+  };
+  // creaking door
+  A.playDoor=function(open=true){
+    const c=A.ctx;if(!c)return;const t=c.currentTime;
+    const o=c.createOscillator();o.type='sawtooth';
+    o.frequency.setValueAtTime(open?90:150,t);o.frequency.linearRampToValueAtTime(open?150:70,t+.5);
+    const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=420;bp.Q.value=9;
+    const gn=c.createGain();gn.gain.setValueAtTime(.0006,t);gn.gain.linearRampToValueAtTime(.14,t+.08);gn.gain.exponentialRampToValueAtTime(.0006,t+.55);
+    o.connect(bp);bp.connect(gn);gn.connect(A.masterGain);o.start(t);o.stop(t+.56);
+    const sc=makeNoise(.5);const sf=c.createBiquadFilter();sf.type='bandpass';sf.frequency.value=1400;sf.Q.value=2;
+    const sg=c.createGain();sg.gain.setValueAtTime(.05,t);sg.gain.exponentialRampToValueAtTime(.0006,t+.45);
+    sc.connect(sf);sf.connect(sg);sg.connect(A.masterGain);sc.start(t);sc.stop(t+.5);
+    const th=c.createOscillator();th.type='sine';th.frequency.setValueAtTime(70,t+.5);th.frequency.exponentialRampToValueAtTime(40,t+.62);
+    const tg=c.createGain();tg.gain.setValueAtTime(.3,t+.5);tg.gain.exponentialRampToValueAtTime(.0006,t+.66);
+    th.connect(tg);tg.connect(A.masterGain);th.start(t+.5);th.stop(t+.66);
+  };
+
+  /* ================= 2) HORROR MUSIC ================= */
+  const M={ready:false,mode:'off',started:{},beatAcc:0,beatEvery:1.2,lub:0};
+  function ensureMusic(){
+    const c=A.ctx;if(!c)return false;if(M.ready)return true;
+    M.gain=c.createGain();M.gain.gain.value=0;M.gain.connect(A.masterGain);
+    // drone: detuned saws + fifth through a lowpass
+    M.droneFilt=c.createBiquadFilter();M.droneFilt.type='lowpass';M.droneFilt.frequency.value=200;M.droneFilt.Q.value=4;M.droneFilt.connect(M.gain);
+    M.droneGain=c.createGain();M.droneGain.gain.value=0;M.droneGain.connect(M.droneFilt);
+    [[55,'sawtooth'],[55.4,'sawtooth'],[82.4,'triangle']].forEach(d=>{
+      const o=c.createOscillator();o.type=d[1];o.frequency.value=d[0];o.connect(M.droneGain);o.start();
+    });
+    // dissonant cluster pad
+    M.padGain=c.createGain();M.padGain.gain.value=0;M.padGain.connect(M.gain);
+    [207.65,220,233.08].forEach(f=>{const o=c.createOscillator();o.type='sine';o.frequency.value=f;o.connect(M.padGain);o.start();});
+    // high dissonant wail with slow vibrato
+    M.wailGain=c.createGain();M.wailGain.gain.value=0;M.wailGain.connect(M.gain);
+    M.wail=c.createOscillator();M.wail.type='sine';M.wail.frequency.value=622;M.wail.connect(M.wailGain);M.wail.start();
+    const w2=c.createOscillator();w2.type='sine';w2.frequency.value=641;w2.connect(M.wailGain);w2.start();
+    const lfo=c.createOscillator();lfo.type='sine';lfo.frequency.value=5.2;
+    const lfoGain=c.createGain();lfoGain.gain.value=7;lfo.connect(lfoGain);lfoGain.connect(M.wail.frequency);lfo.start();
+    M.ready=true;return true;
+  }
+  function mramp(param,v,tc){if(param)param.setTargetAtTime(v,anow(),tc);}
+  function heartbeat(strong){
+    const c=A.ctx;if(!c)return;const t=c.currentTime;
+    function thump(tt,f,v){
+      const o=c.createOscillator();o.type='sine';o.frequency.setValueAtTime(f,tt);o.frequency.exponentialRampToValueAtTime(f*.55,tt+.14);
+      const gn=c.createGain();gn.gain.setValueAtTime(v,tt);gn.gain.exponentialRampToValueAtTime(.0006,tt+.18);
+      o.connect(gn);gn.connect(M.gain);o.start(tt);o.stop(tt+.2);
+    }
+    thump(t,62,strong?.9:.6);
+    thump(t+.16,48,strong?.55:.36);
+  }
+  M.toll=function(){
+    const c=A.ctx;if(!c||!M.ready)return;const t=c.currentTime;
+    [41,55,82].forEach((f,i)=>{
+      const o=c.createOscillator();o.type=i===2?'triangle':'sine';o.frequency.value=f;
+      const gn=c.createGain();gn.gain.setValueAtTime(.0006,t);gn.gain.linearRampToValueAtTime(.5/(i+1),t+.02);gn.gain.exponentialRampToValueAtTime(.0006,t+2.6);
+      o.connect(gn);gn.connect(M.gain);o.start(t);o.stop(t+2.7);
+    });
+    const n=makeNoise(1.2);const f=c.createBiquadFilter();f.type='lowpass';f.frequency.value=200;
+    const ng=c.createGain();ng.gain.setValueAtTime(.4,t);ng.gain.exponentialRampToValueAtTime(.0006,t+1.2);
+    n.connect(f);f.connect(ng);ng.connect(M.gain);n.start(t);n.stop(t+1.2);
+  };
+  M.stab=function(){
+    const c=A.ctx;if(!c||!M.ready)return;const t=c.currentTime;
+    [220,233.08,311.13].forEach(f=>{
+      const o=c.createOscillator();o.type='sawtooth';o.frequency.value=f;
+      const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=f*2;bp.Q.value=2;
+      const gn=c.createGain();gn.gain.setValueAtTime(.28,t);gn.gain.exponentialRampToValueAtTime(.0006,t+.32);
+      o.connect(bp);bp.connect(gn);gn.connect(M.gain);o.start(t);o.stop(t+.34);
+    });
+  };
+  M.riser=function(dur){
+    const c=A.ctx;if(!c||!M.ready)return;const t=c.currentTime;dur=dur||1.6;
+    const o=c.createOscillator();o.type='sawtooth';o.frequency.setValueAtTime(120,t);o.frequency.exponentialRampToValueAtTime(900,t+dur);
+    const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.setValueAtTime(300,t);bp.frequency.exponentialRampToValueAtTime(2200,t+dur);bp.Q.value=4;
+    const gn=c.createGain();gn.gain.setValueAtTime(.0006,t);gn.gain.linearRampToValueAtTime(.16,t+dur*.8);gn.gain.exponentialRampToValueAtTime(.0006,t+dur+.1);
+    o.connect(bp);bp.connect(gn);gn.connect(M.gain);o.start(t);o.stop(t+dur+.12);
+  };
+  M.set=function(mode,inten,dt){
+    if(!ensureMusic())return;
+    if(mode!==M.mode){
+      // one-shots on entering a mode
+      if(mode==='arrival'){M.toll();M.riser(1.8);}
+      if(mode==='boss'&&M.mode!=='arrival'){M.toll();}
+      if(mode==='countdown'&&M.mode==='off'){M.riser(2.4);}
+      M.mode=mode;
+    }
+    let mg=0,dg=0,pg=0,wg=0,fc=200,be=99;
+    if(mode==='countdown'){
+      mg=.5;dg=.24+.22*inten;pg=.04+.34*inten;wg=.03*inten;fc=170+430*inten;be=1.35-.9*inten;
+      if(Math.random()<dt*(0.15+inten*0.5))M.riser(1.2+Math.random());
+    }else if(mode==='arrival'){
+      mg=.56;dg=.5;pg=.5;wg=.2;fc=520;be=.62;
+    }else if(mode==='boss'){
+      mg=.6;dg=.5;pg=.38;wg=.15;fc=560;be=.5;
+    }
+    mramp(M.gain.gain,mg,mode==='off'?.9:.4);
+    mramp(M.droneGain.gain,dg,.5);
+    mramp(M.padGain.gain,pg,.6);
+    mramp(M.wailGain.gain,wg,.6);
+    mramp(M.droneFilt.frequency,fc,.5);
+    M.beatEvery=be;
+    if(mg>0.01&&be<50){
+      M.beatAcc+=dt;
+      if(M.beatAcc>=M.beatEvery){M.beatAcc=0;heartbeat(mode!=='countdown'||inten>.6);}
+    }else{M.beatAcc=0;}
+  };
+  window.HorrorMusic=M;
+
+  let lastMT=performance.now();
+  function musicStateTick(){
+    requestAnimationFrame(musicStateTick);
+    const nowp=performance.now();const dt=Math.min(.05,(nowp-lastMT)/1000);lastMT=nowp;
+    if(!A.ctx)return;
+    let mode='off',inten=0;
+    if(STATE.gameStarted&&!STATE.isDead){
+      if(STATE.bossActive||STATE.arenaFight){mode='boss';inten=1;}
+      else if(STATE.succumbActive){mode='arrival';inten=1;}
+      else if(STATE.godRevealReady||STATE.godChoiceShown){mode='arrival';inten=1;}
+      else if(STATE.day===5&&STATE.godCountdown>=0&&!STATE.godHasArrived){mode='countdown';inten=clamp(1-STATE.godCountdown/30,0,1);}
+    }
+    M.set(mode,inten,dt);
+  }
+  requestAnimationFrame(musicStateTick);
+
+  /* ================= 3) GOD ARRIVAL: forced look + head-rip succumb ============ */
+  // freeze mouse look during cinematics
+  if(typeof applySmoothLook==='function'){
+    const _prevASL=applySmoothLook;
+    applySmoothLook=function(delta){
+      if(STATE.cinematicLock){STATE.lookDX=0;STATE.lookDY=0;return;}
+      return _prevASL.apply(this,arguments);
+    };
+  }
+  function godHeadY(god){return god.userData&&god.userData.horrorBunnyGod?9:4;}
+  function godBaseScale(god){return god.userData&&god.userData.horrorBunnyGod?2.25:1;}
+
+  // Force the camera to turn onto God, then raise the choice menu.
+  updateGodArrival=function(delta){
+    if(!STATE.godRevealReady||STATE.isDead||STATE.bossActive||STATE.succumbActive)return;
+    const god=buildGodForm();god.visible=true;
+    if(!STATE.godFrontPlaced){
+      STATE.godFrontPlaced=true;STATE.godSeenTimer=0;STATE.cinematicLock=true;
+      const fwd=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+      const gx=playerControls.position.x+fwd.x*12,gz=playerControls.position.z+fwd.z*12;
+      god.position.set(gx,getTerrainHeight(gx,gz)-.2,gz);
+      STATE.godLockVisiblePos={x:gx,z:gz};
+      showToast('LOOK AT WHAT YOU MADE.',2400);
+    }
+    god.scale.setScalar(godBaseScale(god)*(1+Math.sin(performance.now()/140)*.02));
+    STATE.playerVelocity.x=0;STATE.playerVelocity.z=0;
+    const dx=god.position.x-playerControls.position.x,dz=god.position.z-playerControls.position.z;
+    const horiz=Math.hypot(dx,dz);
+    const wantYaw=Math.atan2(-dx,-dz);
+    const dy=(god.position.y+godHeadY(god)*godBaseScale(god)*.5)-playerControls.position.y;
+    const wantPitch=clamp(Math.atan2(dy,horiz),-1.2,1.2);
+    yaw+=angDiff(wantYaw,yaw)*Math.min(1,delta*3.4);
+    pitch+=(wantPitch-pitch)*Math.min(1,delta*3.4);
+    god.lookAt(playerControls.position.x,god.position.y+godHeadY(god)*godBaseScale(god)*.5,playerControls.position.z);
+    STATE.godSeenTimer=(STATE.godSeenTimer||0)+delta;
+    if(STATE.godFinalWail!==undefined)STATE.godFinalWail+=delta;
+    const aligned=Math.abs(angDiff(wantYaw,yaw))<.08;
+    if(!STATE.godSeen&&((aligned&&STATE.godSeenTimer>.9)||STATE.godSeenTimer>2.6)){
+      STATE.godSeen=true;STATE.cinematicLock=false;
+      triggerGodReveal();
+      const hint=document.querySelector('#god-choice-screen .choice-box p:last-child');
+      if(hint)hint.innerHTML='FIGHT: he has four attacks. Watch his wind-up, read the glowing ground, dodge, then empty his health bar.<br>SUCCUMB: kneel, and let him take your head.';
+    }
+  };
+
+  // red flash overlay for the head-rip
+  function redOverlay(){
+    let o=document.getElementById('succumb-red');
+    if(!o){o=document.createElement('div');o.id='succumb-red';
+      o.style.cssText='position:absolute;inset:0;z-index:200;pointer-events:none;background:radial-gradient(circle at 50% 45%,rgba(120,0,0,.2),rgba(90,0,0,.85));opacity:0;mix-blend-mode:multiply;transition:none';
+      document.body.appendChild(o);}
+    return o;
+  }
+  function wetRip(){
+    const c=A.ctx;if(!c)return;const t=c.currentTime;
+    const n=makeNoise(.6);const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.setValueAtTime(800,t);bp.frequency.exponentialRampToValueAtTime(180,t+.5);bp.Q.value=1.2;
+    const gn=c.createGain();gn.gain.setValueAtTime(.7,t);gn.gain.exponentialRampToValueAtTime(.0008,t+.55);
+    n.connect(bp);bp.connect(gn);gn.connect(A.masterGain);n.start(t);n.stop(t+.6);
+    const o=c.createOscillator();o.type='sawtooth';o.frequency.setValueAtTime(140,t);o.frequency.exponentialRampToValueAtTime(35,t+.5);
+    const og=c.createGain();og.gain.setValueAtTime(.6,t);og.gain.exponentialRampToValueAtTime(.0008,t+.55);
+    o.connect(og);og.connect(A.masterGain);o.start(t);o.stop(t+.56);
+  }
+  function playSuccumbCutscene(){
+    if(STATE.succumbActive||STATE.isDead)return;
+    STATE.succumbActive=true;STATE.isPaused=true;STATE.cinematicLock=true;STATE.godSeen=true;
+    if(typeof hideGodChoice==='function')hideGodChoice();
+    const bl=document.getElementById('screen-blackout');if(bl)bl.classList.remove('show');
+    document.getElementById('ui-layer').classList.add('hidden');
+    document.getElementById('crosshair').classList.add('hidden');
+    try{document.exitPointerLock()}catch(e){}
+    const red=redOverlay();
+    const god=buildGodForm();god.visible=true;
+    const fwd=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+    const baseX=playerControls.position.x+fwd.x*9,baseZ=playerControls.position.z+fwd.z*9;
+    god.position.set(baseX,getTerrainHeight(baseX,baseZ)-.2,baseZ);
+    STATE.godLockVisiblePos={x:baseX,z:baseZ};
+    const startPitch=pitch;
+    if(M.toll)M.toll();
+    A.playNoise&&A.playNoise(1.0,'lowpass',90,1.0);
+    const t0=performance.now();
+    STATE._succumbGrab=false;STATE._succumbRip=false;
+    function frame(){
+      if(!STATE.succumbActive)return;
+      // keep the HUD/crosshair/scope out of the cutscene every frame
+      document.getElementById('ui-layer').classList.add('hidden');
+      document.getElementById('crosshair').classList.add('hidden');
+      const so=document.getElementById('scope-overlay');if(so)so.style.display='none';
+      const el=(performance.now()-t0)/1000;
+      const g=buildGodForm();
+      if(el<1.5){
+        const k=el/1.5;
+        const gx=baseX+(playerControls.position.x-baseX)*k*.8;
+        const gz=baseZ+(playerControls.position.z-baseZ)*k*.8;
+        g.position.set(gx,getTerrainHeight(gx,gz)-.2+k*1.4,gz);
+        g.scale.setScalar(godBaseScale(g)*(1+k*.9));
+        const dx=g.position.x-playerControls.position.x,dz=g.position.z-playerControls.position.z;
+        yaw=Math.atan2(-dx,-dz);pitch=startPitch+k*.22;
+        g.lookAt(playerControls.position.x,g.position.y+5,playerControls.position.z);
+        camera.rotation.set(pitch,yaw,0,'YXZ');
+        window.__vhsShake&&window.__vhsShake(.3+k*.7);
+        red.style.opacity=(k*.35).toFixed(3);
+      }else if(el<2.3){
+        if(!STATE._succumbGrab){STATE._succumbGrab=true;A.playJumpscare&&A.playJumpscare();}
+        window.__vhsShake&&window.__vhsShake(1.5);
+        camera.rotation.set(startPitch+.22+(Math.random()-.5)*.06,yaw+(Math.random()-.5)*.06,(Math.random()-.5)*.06,'YXZ');
+        red.style.opacity=(.35+(el-1.5)/.8*.45).toFixed(3);
+      }else if(el<3.6){
+        const k=(el-2.3)/1.3;
+        if(!STATE._succumbRip){STATE._succumbRip=true;wetRip();}
+        pitch=startPitch+.22-k*1.5;
+        camera.rotation.set(pitch,yaw,k*Math.PI*1.6,'YXZ');
+        window.__vhsShake&&window.__vhsShake(1.0*(1-k));
+        red.style.opacity=(.8).toFixed(3);
+        if(typeof setBlack==='function')setBlack(Math.min(1,k*1.2),'');
+      }else{
+        camera.rotation.set(startPitch,yaw,0,'YXZ');
+        finishSuccumb(red);
+        return;
+      }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  function finishSuccumb(red){
+    STATE.succumbActive=false;STATE.cinematicLock=false;STATE.isDead=true;STATE.runEnded=true;
+    if(red)red.style.opacity='0';
+    if(typeof setBlack==='function')setBlack(0,'');
+    const es=document.getElementById('end-screen');if(es)es.classList.remove('hidden');
+    const ti=document.getElementById('ending-title');if(ti)ti.innerText='GOD TAKES YOUR HEAD';
+    const cp=document.getElementById('ending-copy');
+    if(cp)cp.innerHTML='You knelt, and He was grateful.<br><br>His hands found your jaw and your spine and pulled until the forest went quiet.<br><br>Your head hangs in the pines now, smiling the way the menu always wanted.';
+  }
+  // Succumb button routes through triggerEnding('god'): intercept it.
+  const _prevTriggerEnding=triggerEnding;
+  triggerEnding=function(kind){
+    if(kind==='god'&&!STATE.succumbActive&&!STATE.isDead){return playSuccumbCutscene();}
+    return _prevTriggerEnding.apply(this,arguments);
+  };
+
+  /* ================= 4) BOSS ARENA + 4 TELEGRAPHED ATTACKS ================= */
+  const RED=0xff2b2b,ORANGE=0xff6a2a;
+  function discIndicator(x,z,radius,color){
+    const grp=new THREE.Group();
+    const outline=new THREE.Mesh(new THREE.CircleGeometry(radius,30),new THREE.MeshBasicMaterial({color,transparent:true,opacity:.22,side:THREE.DoubleSide,depthWrite:false}));
+    outline.rotation.x=-HALF;grp.add(outline);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(radius,radius*.06,6,34),new THREE.MeshBasicMaterial({color,transparent:true,opacity:1,depthWrite:false}));
+    ring.rotation.x=-HALF;grp.add(ring);
+    const fill=new THREE.Mesh(new THREE.CircleGeometry(radius,30),new THREE.MeshBasicMaterial({color:ORANGE,transparent:true,opacity:.5,side:THREE.DoubleSide,depthWrite:false,blending:THREE.AdditiveBlending}));
+    fill.rotation.x=-HALF;fill.scale.setScalar(.02);grp.add(fill);
+    // vertical warning column so the danger reads even when looking forward
+    const col=new THREE.Mesh(new THREE.CylinderGeometry(radius*.94,radius*.94,7,20,1,true),new THREE.MeshBasicMaterial({color,transparent:true,opacity:.16,side:THREE.DoubleSide,depthWrite:false,blending:THREE.AdditiveBlending}));
+    col.position.y=3.5;grp.add(col);
+    grp.position.set(x,getTerrainHeight(x,z)+.07,z);
+    scene.add(grp);
+    return {grp,fill,col,radius,x,z};
+  }
+  function laneIndicator(x,z,ang,length,width){
+    const grp=new THREE.Group();
+    const base=new THREE.Mesh(new THREE.PlaneGeometry(width,length),new THREE.MeshBasicMaterial({color:RED,transparent:true,opacity:.16,side:THREE.DoubleSide,depthWrite:false}));
+    base.rotation.x=-HALF;grp.add(base);
+    const fill=new THREE.Mesh(new THREE.PlaneGeometry(width,length),new THREE.MeshBasicMaterial({color:ORANGE,transparent:true,opacity:.55,side:THREE.DoubleSide,depthWrite:false}));
+    fill.rotation.x=-HALF;fill.scale.y=.02;grp.add(fill);
+    grp.position.set(x,getTerrainHeight(x,z)+.08,z);
+    grp.rotation.y=ang;
+    scene.add(grp);
+    return {grp,fill,length,width,ang,x,z};
+  }
+  function shockRing(x,z,big){
+    const m=new THREE.Mesh(new THREE.TorusGeometry(1,.16,6,30),new THREE.MeshBasicMaterial({color:big?ORANGE:RED,transparent:true,opacity:.9,depthWrite:false}));
+    m.rotation.x=-HALF;m.position.set(x,getTerrainHeight(x,z)+.2,z);scene.add(m);
+    STATE.arenaFx.push({m,t:0,dur:big?.7:.5,max:big?16:9});
+    A.playNoise&&A.playNoise(big?.5:.3,'lowpass',big?110:170,big?1.1:.7);
+  }
+  function clearIndicator(ind){if(ind&&ind.grp){scene.remove(ind.grp);ind.grp.traverse(o=>{if(o.geometry)o.geometry.dispose();});}}
+
+  function buildArena(cx,cz){
+    if(STATE.arenaGroup){scene.remove(STATE.arenaGroup);}
+    const g=new THREE.Group();
+    const R=STATE.arenaRadius;
+    const y=getTerrainHeight(cx,cz);
+    const floor=new THREE.Mesh(new THREE.CircleGeometry(R,48),new THREE.MeshStandardMaterial({color:0x1a0d0d,roughness:1,metalness:0}));
+    floor.rotation.x=-HALF;floor.position.set(cx,y+.03,cz);floor.receiveShadow=true;g.add(floor);
+    const rune=new THREE.Mesh(new THREE.TorusGeometry(R-1.2,.22,8,60),new THREE.MeshBasicMaterial({color:0x5a0d0d}));
+    rune.rotation.x=-HALF;rune.position.set(cx,y+.09,cz);g.add(rune);
+    const rune2=new THREE.Mesh(new THREE.TorusGeometry(R*.55,.14,8,48),new THREE.MeshBasicMaterial({color:0x3a0808}));
+    rune2.rotation.x=-HALF;rune2.position.set(cx,y+.08,cz);g.add(rune2);
+    const pillarMat=new THREE.MeshStandardMaterial({color:0x0c0808,roughness:.9,metalness:.1});
+    for(let i=0;i<14;i++){
+      const a=i/14*TAU;const px=cx+Math.cos(a)*R,pz=cz+Math.sin(a)*R;
+      const h=5+Math.random()*3;
+      const p=new THREE.Mesh(new THREE.CylinderGeometry(.5,.75,h,7),pillarMat);
+      p.position.set(px,getTerrainHeight(px,pz)+h/2,pz);p.castShadow=true;g.add(p);
+      const flame=new THREE.PointLight(i%2?0xff4422:0xff7733,1.4,26,2);
+      flame.position.set(px,getTerrainHeight(px,pz)+h+.5,pz);g.add(flame);
+      const bead=new THREE.Mesh(new THREE.SphereGeometry(.5,8,6),new THREE.MeshBasicMaterial({color:0xff7a33}));
+      bead.position.copy(flame.position);g.add(bead);
+    }
+    const core=new THREE.PointLight(0xff3344,2.2,60,1.6);core.position.set(cx,10,cz);g.add(core);
+    scene.add(g);STATE.arenaGroup=g;
+  }
+  function endArena(){
+    STATE.arenaFight=false;
+    if(STATE.arenaGroup){scene.remove(STATE.arenaGroup);STATE.arenaGroup=null;}
+    if(STATE.arenaAttack){clearIndicator(STATE.arenaAttack.ind);(STATE.arenaAttack.inds||[]).forEach(clearIndicator);STATE.arenaAttack=null;}
+    (STATE.arenaFx||[]).forEach(f=>scene.remove(f.m));STATE.arenaFx=[];
+  }
+  window.__endArena=endArena;
+
+  function startArenaFight(){
+    STATE.arenaFight=true;STATE.cinematicLock=false;STATE.succumbActive=false;
+    STATE.arenaRadius=24;
+    STATE.bossMaxHealth=Math.max(STATE.bossMaxHealth||0,90);STATE.bossHealth=STATE.bossMaxHealth;
+    STATE.arenaCenter={x:playerControls.position.x,z:playerControls.position.z};
+    STATE.arenaFx=[];STATE.arenaAttack=null;STATE.arenaLastAttack=null;
+    STATE.arenaNextIn=2.0;STATE.arenaGodAngle=0;STATE.arenaGodYOff=0;STATE.arenaGodLean=0;
+    buildArena(STATE.arenaCenter.x,STATE.arenaCenter.z);
+    const god=buildGodForm();god.visible=true;
+    const gx=STATE.arenaCenter.x,gz=STATE.arenaCenter.z-12;
+    god.position.set(gx,getTerrainHeight(gx,gz)-.2,gz);
+    STATE.godLockVisiblePos={x:gx,z:gz};
+    // face the player toward God so the fight opens on him
+    yaw=Math.atan2(-(gx-playerControls.position.x),-(gz-playerControls.position.z));
+    pitch=-.04;camera.rotation.set(pitch,yaw,0,'YXZ');
+    const w=curWep();if(w){w.ammo=w.maxMag;w.reserve=Math.max(w.reserve,w.maxReserve||w.reserve);}
+    updateBossBar&&updateBossBar();updateHUD&&updateHUD();
+    const sub=document.getElementById('boss-sub');if(sub)sub.textContent='READ HIS WIND-UP · DODGE THE MARKED GROUND · THEN FIRE';
+    showToast('THE BUNNY GOD RISES. WATCH HIM WIND UP, DODGE, THEN EMPTY HIS HEALTH.',3600);
+  }
+  // FIGHT button calls startBossFight: chain into the arena.
+  const _prevStartBoss=startBossFight;
+  startBossFight=function(){
+    _prevStartBoss.apply(this,arguments);
+    startArenaFight();
+  };
+  // While the arena runs, our tick owns the fight; suppress the old attack loop.
+  const _prevUBF=updateBossFight;
+  updateBossFight=function(delta){
+    if(STATE.arenaFight)return;
+    return _prevUBF.apply(this,arguments);
+  };
+
+  const ATTACKS={
+    dome:{name:'GROUND SLAM',windup:1.5,dmg:18},
+    wave:{name:'SHOCKWAVE',windup:1.4,dmg:20},
+    beam:{name:'EYE BEAM',windup:1.3,dmg:19},
+    jump:{name:'LEAP SLAM',windup:1.5,dmg:22}
+  };
+  function pickAttack(){
+    const pool=['dome','wave','beam','jump'].filter(a=>a!==STATE.arenaLastAttack);
+    const p=pool[Math.floor(Math.random()*pool.length)];
+    STATE.arenaLastAttack=p;return p;
+  }
+  function flareGodEyes(v){
+    const god=buildGodForm();
+    god.traverse(o=>{if(o.isPointLight&&o.color&&o.color.r>o.color.b){o.userData.arenaFlare=v;}});
+  }
+  function startAttack(type,hpRatio){
+    const def=ATTACKS[type];
+    const windup=def.windup-(1-hpRatio)*.55;
+    const god=buildGodForm();
+    const a={type,name:def.name,dmg:def.dmg,t:0,windup:Math.max(.7,windup),struck:false,ind:null,inds:[],data:{}};
+    const c=STATE.arenaCenter,R=STATE.arenaRadius;
+    if(type==='dome'){
+      const n=hpRatio<.5?3:2;
+      for(let i=0;i<n;i++){
+        const ox=i===0?0:(Math.random()-.5)*10,oz=i===0?0:(Math.random()-.5)*10;
+        let tx=clamp(playerControls.position.x+ox,c.x-R+3,c.x+R-3);
+        let tz=clamp(playerControls.position.z+oz,c.z-R+3,c.z+R-3);
+        a.inds.push(discIndicator(tx,tz,4.2,RED));
+      }
+    }else if(type==='wave'){
+      a.data.gx=god.position.x;a.data.gz=god.position.z;a.data.R=13;
+      a.ind=discIndicator(god.position.x,god.position.z,13,RED);
+    }else if(type==='beam'){
+      const dx=playerControls.position.x-god.position.x,dz=playerControls.position.z-god.position.z;
+      const ang=Math.atan2(dx,dz);
+      a.data.ang=ang;a.data.gx=god.position.x;a.data.gz=god.position.z;a.data.width=4.2;a.data.len=46;
+      const mx=god.position.x+Math.sin(ang)*a.data.len/2,mz=god.position.z+Math.cos(ang)*a.data.len/2;
+      a.ind=laneIndicator(mx,mz,ang,a.data.len,a.data.width);
+    }else if(type==='jump'){
+      a.data.tx=clamp(playerControls.position.x,c.x-R+3,c.x+R-3);
+      a.data.tz=clamp(playerControls.position.z,c.z-R+3,c.z+R-3);
+      a.data.gx0=god.position.x;a.data.gz0=god.position.z;
+      a.ind=discIndicator(a.data.tx,a.data.tz,6,RED);
+    }
+    STATE.arenaAttack=a;
+    STATE.bossNextAttackName=def.name;
+    showToast(def.name+' INCOMING',900);
+    M.riser&&M.riser(a.windup);
+  }
+  function runAttack(god,dt,hpRatio){
+    const a=STATE.arenaAttack;a.t+=dt;
+    const p=clamp(a.t/a.windup,0,1);
+    STATE.bossAttackTimer=Math.max(0,a.windup-a.t); // drives the vhs jaw-open sync
+    // fill telegraphs
+    const setFill=ind=>{if(ind&&ind.fill){if(a.type==='beam'){ind.fill.scale.y=Math.max(.02,p);}else{ind.fill.scale.setScalar(Math.max(.02,p));}ind.fill.material.opacity=.35+.3*p;}};
+    if(a.ind)setFill(a.ind);a.inds.forEach(setFill);
+    flareGodEyes(a.type==='beam'?(1.5+p*3):(p*1.5));
+    // god wind-up animation
+    if(a.type==='dome'){STATE.arenaGodYOff=Math.sin(p*Math.PI)*3.2;STATE.arenaGodLean=-p*.25;}
+    else if(a.type==='wave'){STATE.arenaGodYOff=-p*2.2;STATE.arenaGodLean=p*.2;}
+    else if(a.type==='beam'){STATE.arenaGodYOff=0;STATE.arenaGodLean=p*.5;}
+    else if(a.type==='jump'){
+      if(p<1){const arc=Math.sin(p*Math.PI);STATE.arenaGodYOff=arc*11;
+        god.position.x=a.data.gx0+(a.data.tx-a.data.gx0)*p;god.position.z=a.data.gz0+(a.data.tz-a.data.gz0)*p;}
+    }
+    // strike
+    if(p>=1&&!a.struck){
+      a.struck=true;a.recover=.55;
+      const pp=playerControls.position;
+      if(a.type==='dome'){
+        a.inds.forEach(ind=>{
+          shockRing(ind.x,ind.z,false);
+          if(Math.hypot(pp.x-ind.x,pp.z-ind.z)<ind.radius)damagePlayer(a.dmg,'GOD');
+        });
+        STATE.arenaGodYOff=-1.5;window.__vhsShake&&window.__vhsShake(.7);
+      }else if(a.type==='wave'){
+        shockRing(a.data.gx,a.data.gz,true);
+        if(Math.hypot(pp.x-a.data.gx,pp.z-a.data.gz)<a.data.R)damagePlayer(a.dmg,'GOD');
+        window.__vhsShake&&window.__vhsShake(.9);
+      }else if(a.type==='beam'){
+        // distance from player to the beam's infinite line, only in front of god
+        const rel=new THREE.Vector2(pp.x-a.data.gx,pp.z-a.data.gz);
+        const dir=new THREE.Vector2(Math.sin(a.data.ang),Math.cos(a.data.ang));
+        const along=rel.x*dir.x+rel.y*dir.y;
+        const perp=Math.abs(rel.x*dir.y-rel.y*dir.x);
+        if(along>0&&along<a.data.len&&perp<a.data.width*.5+1.2)damagePlayer(a.dmg,'GOD');
+        // bright beam flash
+        if(a.ind&&a.ind.fill){a.ind.fill.material.color.setHex(0xffe0c0);a.ind.fill.scale.y=1;a.ind.fill.material.opacity=.95;}
+        window.__vhsShake&&window.__vhsShake(.6);M.stab&&M.stab();
+      }else if(a.type==='jump'){
+        shockRing(a.data.tx,a.data.tz,true);
+        god.position.x=a.data.tx;god.position.z=a.data.tz;STATE.arenaGodYOff=0;
+        if(Math.hypot(pp.x-a.data.tx,pp.z-a.data.tz)<6.5)damagePlayer(a.dmg,'GOD');
+        window.__vhsShake&&window.__vhsShake(1.1);M.stab&&M.stab();
+      }
+      M.stab&&a.type!=='beam'&&a.type!=='jump'&&M.stab();
+    }
+    // recover then clear
+    if(a.struck){
+      a.recover-=dt;
+      STATE.arenaGodYOff*=.85;STATE.arenaGodLean*=.85;
+      if(a.recover<=0){
+        clearIndicator(a.ind);a.inds.forEach(clearIndicator);
+        STATE.arenaAttack=null;flareGodEyes(0);
+        STATE.arenaNextIn=(1.5-(1-hpRatio)*.75)+Math.random()*.5;
+      }
+    }
+  }
+  function godStalk(god,dt){
+    STATE.arenaGodAngle=(STATE.arenaGodAngle||0)+dt*.35;
+    const c=STATE.arenaCenter,R=STATE.arenaRadius;
+    let tx=playerControls.position.x+Math.cos(STATE.arenaGodAngle)*10;
+    let tz=playerControls.position.z+Math.sin(STATE.arenaGodAngle)*10;
+    tx=clamp(tx,c.x-R+2,c.x+R-2);tz=clamp(tz,c.z-R+2,c.z+R-2);
+    god.position.x+=(tx-god.position.x)*Math.min(1,dt*1.1);
+    god.position.z+=(tz-god.position.z)*Math.min(1,dt*1.1);
+    STATE.arenaGodYOff=(STATE.arenaGodYOff||0)*.88;STATE.arenaGodLean=(STATE.arenaGodLean||0)*.88;
+  }
+  function updateArenaFx(dt){
+    for(let i=STATE.arenaFx.length-1;i>=0;i--){
+      const f=STATE.arenaFx[i];f.t+=dt;const k=f.t/f.dur;
+      if(k>=1){scene.remove(f.m);STATE.arenaFx.splice(i,1);continue;}
+      f.m.scale.setScalar(1+k*f.max);f.m.material.opacity=.9*(1-k);
+    }
+    // eye flares
+    const god=buildGodForm();
+    god.traverse(o=>{if(o.isPointLight&&o.userData.arenaFlare!==undefined){
+      if(o.userData.arenaBase===undefined)o.userData.arenaBase=o.intensity;
+      o.intensity=o.userData.arenaBase+o.userData.arenaFlare;
+    }});
+  }
+
+  let lastAT=performance.now();
+  function arenaTick(){
+    requestAnimationFrame(arenaTick);
+    if(!STATE.arenaFight){lastAT=performance.now();return;}
+    if(!STATE.bossActive){endArena();return;}
+    if(STATE.isPaused||STATE.isDead||STATE.succumbActive){lastAT=performance.now();return;}
+    const nowp=performance.now();const dt=Math.min(.05,(nowp-lastAT)/1000);lastAT=nowp;
+    const god=buildGodForm();
+    const hpRatio=STATE.bossHealth/Math.max(1,STATE.bossMaxHealth);
+    // soft-clamp player inside the arena
+    const c=STATE.arenaCenter,R=STATE.arenaRadius;
+    const pdx=playerControls.position.x-c.x,pdz=playerControls.position.z-c.z,pd=Math.hypot(pdx,pdz);
+    if(pd>R-1.2){const s=(R-1.2)/pd;playerControls.position.x=c.x+pdx*s;playerControls.position.z=c.z+pdz*s;}
+    // never run dry
+    const w=curWep();
+    if(w&&w.ammo<=0&&w.reserve<=0){w.reserve=Math.ceil((w.maxReserve||w.maxMag*3)*.4);showToast('AMMO CACHE. KEEP FIRING.',900);updateHUD&&updateHUD();}
+    if(!STATE.arenaAttack){
+      godStalk(god,dt);
+      STATE.arenaNextIn-=dt;
+      STATE.bossAttackTimer=STATE.arenaNextIn;
+      if(STATE.arenaNextIn<=0)startAttack(pickAttack(),hpRatio);
+    }else{
+      runAttack(god,dt,hpRatio);
+    }
+    // orient + settle god, apply wind-up lean/height on top of lookAt
+    god.position.y=getTerrainHeight(god.position.x,god.position.z)-.2+(STATE.arenaGodYOff||0);
+    god.lookAt(playerControls.position.x,god.position.y+godHeadY(god)*godBaseScale(god)*.5,playerControls.position.z);
+    god.rotation.x+=(STATE.arenaGodLean||0);
+    STATE.godLockVisiblePos={x:god.position.x,z:god.position.z};
+    updateArenaFx(dt);
+    updateBossBar&&updateBossBar();
+  }
+  requestAnimationFrame(arenaTick);
+
+  // Clean the arena up if a run ends or resets while it is still standing.
+  let watchLast=performance.now();
+  function arenaWatch(){
+    requestAnimationFrame(arenaWatch);
+    if(STATE.arenaFight&&!STATE.bossActive)endArena();
+  }
+  requestAnimationFrame(arenaWatch);
+
+  // Debug handle extensions for testing.
+  if(window.__vhs){
+    window.__vhs.music=M;
+    window.__vhs.audio=A;
+    window.__vhs.succumb=()=>playSuccumbCutscene();
+    window.__vhs.arena=()=>{STATE.day=5;STATE.bossActive=false;if(typeof startBossFight==='function')startBossFight();};
+    window.__vhs.forceGodArrival=()=>{STATE.day=5;STATE.godHasArrived=true;STATE.godRevealReady=true;STATE.godSequenceActive=true;STATE.godSeen=false;STATE.godFrontPlaced=false;STATE.godRevealReady=true;};
+    window.__vhs.forceAttack=(t)=>{if(STATE.arenaFight){if(STATE.arenaAttack){clearIndicator(STATE.arenaAttack.ind);(STATE.arenaAttack.inds||[]).forEach(clearIndicator);STATE.arenaAttack=null;}startAttack(t||pickAttack(),STATE.bossHealth/Math.max(1,STATE.bossMaxHealth));}};
   }
 })();
 

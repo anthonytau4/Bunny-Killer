@@ -1271,7 +1271,7 @@ function buildSquirrel(isBig=false,isPale=false){
 }
 
 
-function spawnAnimals(count){animals.forEach(a=>scene.remove(a.group));animals.length=0;let numBig=STATE.day>=2?Math.floor(STATE.day*1.5):0;let total=count+numBig;for(let i=0;i<total;i++){const isBig=i>=count;const isPale=STATE.day>=4&&Math.random()<.18;const sqRig=buildSquirrel(isBig,isPale);let ax,az;do{ax=(Math.random()-.5)*200;az=(Math.random()-.5)*200}while(Math.abs(ax)<30&&Math.abs(az)<30);sqRig.group.position.set(ax,getTerrainHeight(ax,az),az);scene.add(sqRig.group);const hitbox=new THREE.Mesh(new THREE.BoxGeometry(.8*sqRig.scale,.9*sqRig.scale,1.2*sqRig.scale),new THREE.MeshBasicMaterial({visible:false}));hitbox.position.y=.4*sqRig.scale;sqRig.group.add(hitbox);const data={group:sqRig.group,mesh:hitbox,tail:sqRig.tail,legs:sqRig.legs,state:'idle',velocity:new THREE.Vector3(),timer:Math.random()*2,isBig,isPale,hp:isPale?10:(isBig?30:10),userData:{type:'animal',id:i,prompt:'PRESS [E] TO COLLECT'}};hitbox.userData=data.userData;animals.push(data)}}
+function spawnAnimals(count){animals.forEach(a=>scene.remove(a.group));animals.length=0;let numBig=STATE.day>=2?Math.floor(STATE.day*1.5):0;let total=count+numBig;for(let i=0;i<total;i++){const isBig=i>=count;const isPale=STATE.day>=4&&Math.random()<.18;const sqRig=buildSquirrel(isBig,isPale);let ax,az;do{ax=(Math.random()-.5)*200;az=(Math.random()-.5)*200}while(Math.abs(ax)<30&&Math.abs(az)<30);sqRig.group.position.set(ax,getTerrainHeight(ax,az),az);scene.add(sqRig.group);const hitbox=new THREE.Mesh(new THREE.BoxGeometry(1.2*sqRig.scale,1.4*sqRig.scale,1.6*sqRig.scale),new THREE.MeshBasicMaterial({visible:false}));hitbox.position.y=.45*sqRig.scale;sqRig.group.add(hitbox);const data={group:sqRig.group,mesh:hitbox,tail:sqRig.tail,legs:sqRig.legs,state:'idle',velocity:new THREE.Vector3(),timer:Math.random()*2,isBig,isPale,hp:isPale?10:(isBig?30:10),userData:{type:'animal',id:i,prompt:'PRESS [E] TO COLLECT'}};hitbox.userData=data.userData;animals.push(data)}}
 
 const watcherGeo=new THREE.CylinderGeometry(.6,.3,28,8);
 const watcher=new THREE.Mesh(watcherGeo,matEntity);
@@ -1517,7 +1517,7 @@ function fireWeapon(){
       }
   }
   
-  animals.forEach(a=>{if(a.state!=='dead'&&a.group.position.distanceTo(playerControls.position)<65){a.state='flee';a.timer=3+Math.random()*2}});
+  animals.forEach(a=>{if(a.state!=='dead'&&a.group.position.distanceTo(playerControls.position)<65){a.state='flee';a.timer=1.5+Math.random()*1.5}});
   
   if (w.id === 'shotgun' && w.ammo > 0) pumpShotgun();
   else if (w.id === 'rifle' && w.ammo > 0) cycleBolt();
@@ -2142,12 +2142,11 @@ function animate(){
     if(a.state==='dead')return;
     a.timer-=delta;
     if(a.state==='flee'){
-      if(a.timer%.5<.25){
-        let fleeDir=new THREE.Vector3().subVectors(a.group.position,playerControls.position).normalize();
-        a.group.position.addScaledVector(fleeDir,(a.isBig?8:14)*delta);
-        a.group.lookAt(playerControls.position.x,a.group.position.y,playerControls.position.z);
-        a.group.rotation.y+=Math.PI;
-      }
+      // Smooth continuous flee movement (no jerky stop/start intervals)
+      let fleeDir=new THREE.Vector3().subVectors(a.group.position,playerControls.position).normalize();
+      a.group.position.addScaledVector(fleeDir,(a.isBig?7:9)*delta);
+      a.group.lookAt(playerControls.position.x,a.group.position.y,playerControls.position.z);
+      a.group.rotation.y+=Math.PI;
       if(a.timer<=0){a.state='idle';a.timer=1+Math.random()*2}
     }else{
       if(STATE.day>=3&&playerControls.position.distanceTo(a.group.position)<35){
@@ -3277,8 +3276,8 @@ window.addEventListener('keydown',function(e){
       sqRig.group.position.set(ax,getTerrainHeight(ax,az),az);
       scene.add(sqRig.group);
 
-      const hitbox=new THREE.Mesh(new THREE.BoxGeometry(.78*sqRig.scale,.88*sqRig.scale,1.12*sqRig.scale),new THREE.MeshBasicMaterial({visible:false}));
-      hitbox.position.y=.38*sqRig.scale;
+      const hitbox=new THREE.Mesh(new THREE.BoxGeometry(1.2*sqRig.scale,1.4*sqRig.scale,1.6*sqRig.scale),new THREE.MeshBasicMaterial({visible:false}));
+      hitbox.position.y=.45*sqRig.scale;
       sqRig.group.add(hitbox);
 
       const data={
@@ -6023,9 +6022,11 @@ window.addEventListener('keydown',function(e){
 
   function forceLockNow(fromClick=false){
     if(!STATE.gameStarted || STATE.isDead || STATE.runEnded || STATE.retryAvailable)return;
+    // Never request pointer lock while a blocking menu (shop, pause, settings, etc.) is open.
+    if(blockingMenuOpen())return;
     STATE.isPaused=false;
     $('pause-menu').classList.add('hidden');
-    if(!STATE.introCutsceneActive&&!STATE.winCutsceneActive&&!blockingMenuOpen()){
+    if(!STATE.introCutsceneActive&&!STATE.winCutsceneActive){
       $('ui-layer').classList.remove('hidden');
       $('crosshair').classList.remove('hidden');
     }
@@ -6074,10 +6075,12 @@ window.addEventListener('keydown',function(e){
   // Never let old pointerlockchange auto-pause the game anymore.
   document.addEventListener('pointerlockchange',e=>{
     if(STATE.gameStarted&&!STATE.isDead&&!STATE.runEnded){
+      // If a blocking menu (shop, settings, etc.) is open, do NOT unpause or mess with UI.
+      if(blockingMenuOpen())return;
       e.stopImmediatePropagation();
       STATE.isPaused=false;
       $('pause-menu').classList.add('hidden');
-      if(!STATE.introCutsceneActive&&!STATE.winCutsceneActive&&!blockingMenuOpen()){
+      if(!STATE.introCutsceneActive&&!STATE.winCutsceneActive){
         $('ui-layer').classList.remove('hidden');
         $('crosshair').classList.remove('hidden');
       }
@@ -6579,8 +6582,11 @@ window.addEventListener('keydown',function(e){
   // requestLock becomes "try native pointer lock, but always fall back to soft lock".
   const oldRequestLockSoft=requestLock;
   requestLock=function(force=false){
+    // Never lock while a blocking menu is open.
+    if(!gameplayMouseActive()&&!force)return;
     STATE.softMouseLock=true;
     setSoftCursor(gameplayMouseActive());
+    if(!gameplayMouseActive())return;
     try{
       const p=document.body.requestPointerLock&&document.body.requestPointerLock({unadjustedMovement:true});
       if(p&&p.catch)p.catch(()=>{});
@@ -6594,6 +6600,8 @@ window.addEventListener('keydown',function(e){
 
   const oldForceLockSoft=window.forceLockNow;
   window.forceLockNow=function(force=false){
+    // Never lock while a blocking menu (shop, settings, etc.) is open.
+    if(!gameplayMouseActive())return;
     STATE.softMouseLock=true;
     setSoftCursor(gameplayMouseActive());
     if(typeof oldForceLockSoft==='function'){
@@ -6613,6 +6621,8 @@ window.addEventListener('keydown',function(e){
   // Buttons still press. They can also activate soft lock after menus close, but do not swallow clicks.
   window.addEventListener('pointerdown',e=>{
     if(e.target && e.target.closest && e.target.closest('button')){
+      // Do not activate soft lock or request pointer lock while any menu is open.
+      if(!gameplayMouseActive())return;
       STATE.softMouseLock=true;
       setTimeout(()=>setSoftCursor(gameplayMouseActive()),120);
       return;
@@ -6632,15 +6642,15 @@ window.addEventListener('keydown',function(e){
 
   // If old pointerlockchange says "pause", immediately undo it. Soft lock is the source of truth.
   document.addEventListener('pointerlockchange',e=>{
-    if(gameplayMouseActive() || STATE.softMouseLock){
+    if(gameplayMouseActive()){
       e.stopImmediatePropagation();
-      if(gameplayMouseActive()){
-        STATE.isPaused=false;
-        $('pause-menu').classList.add('hidden');
-        $('ui-layer').classList.remove('hidden');
-        $('crosshair').classList.remove('hidden');
-        setSoftCursor(true);
-      }
+      STATE.isPaused=false;
+      $('pause-menu').classList.add('hidden');
+      $('ui-layer').classList.remove('hidden');
+      $('crosshair').classList.remove('hidden');
+      setSoftCursor(true);
+    } else if(STATE.softMouseLock){
+      e.stopImmediatePropagation();
     }
   },true);
 

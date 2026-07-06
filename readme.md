@@ -52,3 +52,22 @@ post-processing shader and remasters the guns, reloads, and bunnies:
   dumps brass muzzle-up, and takes a speedloader.
 - **Bunnies** — fur detail maps with per-bunny tint, whiskers, eye glints, hop
   squash-and-stretch, ear flop, and an analog-horror stare twitch from day 3 on.
+
+## Audio & the God Encounter
+
+- **Sound remaster** — every gunshot is layered synthesis (a sharp crack, a body
+  report, a pressure thump, and a decaying tail) tuned per weapon, plus metallic
+  reload clicks, soft dirt footsteps, and a creaking cabin door.
+- **Horror score** — a procedural score that has no music in normal play, then
+  wakes on Day 5: a low detuned drone and a dissonant cluster swell through the
+  God countdown while a heartbeat speeds up as the timer runs out. His arrival
+  lands a low toll; the boss fight drives a steady pulse with dissonant stabs on
+  his attacks.
+- **God arrival** — when God comes, the camera is dragged onto him and a choice
+  rises: **Fight** or **Succumb**. Succumb plays a cutscene where he lunges,
+  grabs, and rips your head off, then the run ends.
+- **Boss arena** — Fight drops you into a blood-lit arena where the Bunny God has
+  four telegraphed attacks — **Ground Slam** (marked circles at your feet),
+  **Shockwave** (get away from him), **Eye Beam** (strafe out of the lane), and
+  **Leap Slam** (leave the marked landing). Read the wind-up, dodge the glowing
+  ground, then empty his health bar to win.
